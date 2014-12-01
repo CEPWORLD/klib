@@ -1,0 +1,227 @@
+#Kage DB Library 
+#$lib_ver$:0.0.38
+#_k_db(){
+#}
+#_k_conf_close(){
+#}
+
+_k_loaded_conf(){
+   local null
+}
+
+_k_conf_naked() {
+  local inp fn _f_v  _chk_v
+  inp=$*
+  if echo $inp | grep \' >/dev/null ; then
+      echo $inp | awk -F\' '{print $2}' && return 0
+  elif echo $inp | grep \" >/dev/null ; then
+      echo $inp | awk -F\" '{print $2}' && return 0
+  fi
+  return 1
+}
+
+_k_conf_read() {
+  local argv file fn a_argv find_depth argc _open _oc_depth
+  argv="$1"
+  file=$2
+
+  [ -n "$file" ] || file=database.cfg
+  if [ ! -n "$argv" ]; then
+     echo "_k_conf_read <des> <db file>"
+     return 1
+  fi
+  if [ ! -f $file ]; then
+     echo "DB File not found"
+     return 1
+  fi
+
+  a_argv=( $(echo $argv| sed 's/\//\ /g') ) # input data
+  argc=$(( ${#a_argv[*]} - 1 ))
+
+  find_depth=$(( ${#a_argv[*]} - 1 ))       # Last group for search
+  [ $find_depth -ge 3 ] && find_depth=3
+
+  _open=0     #Opened group for found
+  _oc_depth=1 #Open"{" and Close"}" depth
+
+  # reading configuration file
+  cat $file | grep -v "^#" | while read line; do
+
+    #[] find step by step from first group to last group ( group is "<group name> {" ) 
+    if [ $_open -ne $find_depth -a "$(echo $line| grep -w "^${a_argv[$_open]} " | grep " {" >/dev/null  && echo 1 || echo 0)" == "1" ]; then
+      _open=$(( $_open + 1)) #I found it, so i will be searching next step
+
+    #[] Found last group
+    elif [ $_open -eq $find_depth -a "${a_argv[$_open]}" == "$( echo $line | awk '{print $1}')" ]; then
+
+      #if the last found group name has "{" and "}" then one more searching last value in the {}
+      if echo $line | grep "{" >/dev/null; then
+        for fn in $( echo $line | awk -F\{ '{print $2}' | awk -F\} '{print $1}'); do # naked "{" and "}" simbol and searching last value
+          _f_v=( $(echo $fn | sed 's/\=/ /g') )
+          if [ "${_f_v[0]}" == "${a_argv[$argc]}" ]; then
+            line="${_f_v[0]} ${_f_v[1]}" # found last value
+            break
+          fi
+        done
+      fi
+
+      #naked gabage value of ' or " 
+      _k_conf_naked $line  || echo "$line" |awk '{print $2}' # return found value
+      break
+
+    #[] checking how many open("{") and close("}") in the late found group
+    elif [ $_open -ge 1 -a "$(echo $line|grep " {" | grep "}" >/dev/null && echo 1 || echo 0)" == "0" ]; then 
+      if [ "$( echo $line | awk '{print $2}')" == "{" ]; then
+         _oc_depth=$(($_oc_depth+1))
+      elif [ "$( echo $line | awk '{print $1}')" == "}" ]; then
+         _oc_depth=$(($_oc_depth-1))
+      fi
+    fi
+
+    #[] if no more found at late found group then close the searching process
+    [ $_oc_depth -lt 1 ] && break
+  done
+}
+ 
+_k_conf_list() {
+  local argv file fn a_argv find_depth _open _oc_depth _ff
+  argv="$1"
+  file=$2
+
+  [ -n "$file" ] || file=database.cfg
+  if [ ! -n "$argv" -o ! -f $file ]; then
+     echo "_k_conf_list <des> <db file>"
+     return 1
+  fi
+
+  a_argv=( $(echo $argv| sed 's/\//\ /g') ) # input data
+
+  find_depth=$(( ${#a_argv[*]} - 1 ))       # Last group for search
+
+  _open=0     #Opened group for found
+  _oc_depth=0 #Open"{" and Close"}" depth
+  _ff="0"
+
+  # reading configuration file
+  cat $file | grep -v "^#" | while read line; do
+
+    # print for same depth
+    if (( $_ff > 0 && $_ff == $_oc_depth )); then
+       out=$(echo "$line" | awk '{print $1}')
+       [ "$out" != "}" ] && echo $out
+    fi
+    # stop when out of range
+    (( $_ff > 0 && $_ff > $_oc_depth )) && break
+
+    # Open"{" and Close"}" depth
+    if [ "$(echo $line|grep " {" | grep "}" >/dev/null && echo 1 || echo 0)" == "0" ]; then
+      if [ "$( echo $line | awk '{print $2}')" == "{" ]; then
+         _oc_depth=$(($_oc_depth+1))
+      elif [ "$( echo $line | awk '{print $1}')" == "}" ]; then
+         _oc_depth=$(($_oc_depth-1))
+      fi
+    fi
+
+    #[] find step by step from first group to last group ( group is "<group name> {" )
+    if [ "$(echo $line | grep -w "^${a_argv[$_open]} " | grep " {" >/dev/null && echo 1 || echo 0)" == "1" ]; then
+        #[] Found last group
+        if [ "$_open" == "$find_depth" ]; then
+            _ff=$_oc_depth
+        elif (( $_open < $find_depth )); then
+            _open=$(($_open + 1))
+        fi
+    fi
+
+  done
+}
+ 
+##########################################
+#DB Sample
+#Max find_depth is 3 (from 0 to 3)
+#4th is value in value
+##########################################
+#servers {
+#  server-0002 {
+#     id 2
+#     type management
+#     ports {           
+#        1 { id=1 rate=20 hca=1 }
+#        2 { id=2 rate=20 hca=1 }
+#     }
+#  }
+#}
+#
+#global {
+#  network '10.10.0.0'  #
+#  mgmt_name rhel53
+#  net_dev "eth2"
+#}
+#
+
+_k_conf_func() {
+  local argv file fn a_argv find_depth  _open _oc_depth
+  argv="$1"
+  file=$2
+
+  [ -n "$file" ] || file=database.cfg
+  [ -n "$argv" ] || error_return "_k_conf_func <des> <db file>"
+  [ -f $file ] || error_return "DB File not found"
+
+  a_argv=( $(echo $argv| sed 's/\//\ /g') ) # input data
+
+  find_depth=$(( ${#a_argv[*]}))       # Last group for search
+
+  _open=0    #Opened group for found
+  _oc_depth=1 #Open"{" and Close"}" depth
+
+  cat $file | grep -v "^#" | while read line; do
+
+    if [ $_open -ne $find_depth -a "$(echo $line| grep -w "^${a_argv[$_open]} " | grep " {" >/dev/null  && echo 1 || echo 0)" == "1" ]; then
+      _open=$(( $_open + 1)) #I found it, so i will be searching next step
+    elif [ $_open -ge 0 -a "$(echo $line|grep " {" | grep "}" >/dev/null && echo 1 || echo 0)" == "0" ]; then
+      if [ "$( echo $line | awk '{print $2}')" == "{" ]; then
+         _oc_depth=$(($_oc_depth+1))
+      elif [ "$( echo $line | awk '{print $1}')" == "}" ]; then
+         _oc_depth=$(($_oc_depth-1))
+      fi
+    fi
+
+    [ $_open -ne 0 -a $_open -eq $find_depth -a $_oc_depth -ge 0 ] && printf "%s\n" "$line"
+    [ $_oc_depth -lt 1 ] && break
+  done
+}
+
+_k_conf_val(){
+  local argv file fn a_argv find_depth argc _open _oc_depth
+  argv="$1"
+  file=$2
+
+  [ -n "$file" ] || file=database.cfg
+  [ -n "$argv" ] || error_return "_k_conf_val <des> <db file>"
+  [ -f $file ] || error_return "DB File not found"
+
+  a_argv=( $(echo $argv| sed 's/\//\ /g') ) # input data
+  argc=$(( ${#a_argv[*]} - 1 ))
+
+  find_depth=$(( ${#a_argv[*]} - 1 ))       # Last group for search
+
+  _open=0     #Opened group for found
+  _oc_depth=1 #Open"{" and Close"}" depth
+
+  cat $file | grep -v "^#" | while read line; do
+    if [ $_open -ne $find_depth -a "$(echo $line| grep -w "^${a_argv[$_open]} " | grep " {" >/dev/null  && echo 1 || echo 0)" == "1" ]; then
+      _open=$(( $_open + 1)) #I found it, so i will be searching next step
+    elif [ $_open -eq $find_depth -a "${a_argv[$_open]}" == "$( echo $line | sed 's/\=/ /g' | awk '{print $1}')" ]; then
+       echo "$line"
+#       break
+    elif [ $_open -ge 1 -a "$(echo $line|grep " {" | grep "}" >/dev/null && echo 1 || echo 0)" == "0" ]; then
+      if [ "$( echo $line | awk '{print $2}')" == "{" ]; then
+         _oc_depth=$(($_oc_depth+1))
+      elif [ "$( echo $line | awk '{print $1}')" == "}" ]; then
+         _oc_depth=$(($_oc_depth-1))
+      fi
+    fi
+
+    [ $_oc_depth -lt 1 ] && break
+  done
+}

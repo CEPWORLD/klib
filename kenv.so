@@ -1,0 +1,181 @@
+#Kage Library  - env
+#$lib_ver$:0.1.5
+#_k_env(){
+#}
+#_k_env_close(){
+#}
+
+_k_loaded_env(){
+   local null
+}
+     
+_k_env_avail() {
+    local file
+    echo "--------------------------$_K_LIB/kmodule-------------------------"
+    cd $_K_LIB && find . -type f
+    cd - >& /dev/null
+}
+
+_k_env_display() {
+    local file
+    file=$1
+    cat $_K_LIB/$file
+}
+
+_k_env_list() {
+    echo $_k_env_lists
+}
+
+_k_env_load () {
+    local file
+    file=$_K_LIB/$1
+    export _k_env_lists="$_k_env_lists $1"
+    if [ -f $file ]; then 
+    for setup in $(/bin/grep "^setup" $file | /bin/awk '{printf "%s=%s\n",$2,$3}'); do
+       export $setup
+    done
+
+    for env in PATH LD_LIBRARY_PATH MAN_PATH LM_LICENSE_FILE; do
+       tmp_a=""
+       tmp_b=""
+       tmp_a=$(/bin/grep "^pre" $file | /bin/awk -v env=$env '{ if (env == $2) print $3}'| sed "s/\"//g")
+       tmp_b=$(/bin/grep "^back" $file | /bin/awk -v env=$env '{ if (env == $2) print $3}'| sed "s/\"//g")
+       if [ "$env" == "PATH" ]; then
+          if [ -n "$tmp_a" -a -n "$tmp_b" ]; then
+              PATH=${tmp_a}:${PATH}:${tmp_b}
+          elif [ -n "$tmp_a" ]; then
+              PATH=${tmp_a}:${PATH}
+          elif [ -n "$tmp_b" ]; then
+              PATH=${PATH}:${tmp_b}
+          fi
+          export PATH
+       elif [ "$env" == "LD_LIBRARY_PATH" ]; then
+          if [ -n "$tmp_a" -a -n "$tmp_b" ]; then
+              LD_LIBRARY_PATH=${tmp_a}:${LD_LIBRARY_PATH}:${tmp_b}
+          elif [ -n "$tmp_a" ]; then
+              LD_LIBRARY_PATH=${tmp_a}:${LD_LIBRARY_PATH}
+          elif [ -n "$tmp_b" ]; then
+              LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:${tmp_b}
+          fi
+          export LD_LIBRARY_PATH
+       elif [ "$env" == "MANPATH" ]; then
+          if [ -n "$tmp_a" -a -n "$tmp_b" ]; then
+              MANPATH=${tmp_a}:${MANPATH}:${tmp_b}
+          elif [ -n "$tmp_a" ]; then
+              MANPATH=${tmp_a}:${MANPATH}
+          elif [ -n "$tmp_b" ]; then
+              MANPATH=${MANPATH}:${tmp_b}
+          fi
+          export MANPATH
+       elif [ "$env" == "LM_LICENSE_FILE" ]; then
+          if [ -n "$tmp_a" -a -n "$tmp_b" ]; then
+              MANPATH=${tmp_a}:${LM_LICENSE_FILE}:${tmp_b}
+          elif [ -n "$tmp_a" ]; then
+              MANPATH=${tmp_a}:${LM_LICENSE_FILE}
+          elif [ -n "$tmp_b" ]; then
+              MANPATH=${LM_LICENSE_FILE}:${tmp_b}
+          fi
+          export MANPATH
+       fi
+    done
+    else
+       echo "File not found"
+    fi
+}
+
+_k_env_remove() {
+    local path_full remove_path file
+    remove_env=$1
+    env=$2
+    for path in $(echo $env | sed "s/:/ /g" ); do
+        if [ "$path" != "$remove_env" ]; then
+        if [ -n "$path_full" ]; then
+            path_full="${path_full}:${path}"
+        else
+            path_full="${path}"
+        fi
+        fi
+    done
+    echo $path_full
+}
+
+_k_env_unload() {
+    local file
+    file=$_K_LIB/$1
+    export _k_env_lists=$(for renv in $_k_env_lists; do if [ "$renv" != "$1" ]; then  echo $renv; fi ; done )
+
+    if [ -f $file ]; then
+    for setup in $(/bin/grep "^setup" $file | /bin/awk '{print $2}'); do
+       unset $setup
+    done
+
+    for env in PATH LD_LIBRARY_PATH MANPATH LM_LICENSE_FILE; do
+       tmp_a=""
+       tmp_b=""
+       tmp_a=$(/bin/grep "^pre" $file | /bin/awk -v env=$env '{ if (env == $2) print $3}' | sed "s/\"//g")
+       tmp_b=$(/bin/grep "^back" $file | /bin/awk -v env=$env '{ if (env == $2) print $3}'| sed "s/\"//g")
+       if [ "$env" == "PATH" ]; then
+          if [ -n "$tmp_a" -a -n "$tmp_b" ]; then
+              PATH=$(_k_env_remove $tmp_a $PATH)
+              PATH=$(_k_env_remove $tmp_b $PATH)
+          elif [ -n "$tmp_a" ]; then
+              PATH=$(_k_env_remove $tmp_a $PATH)
+          elif [ -n "$tmp_b" ]; then
+              PATH=$(_k_env_remove $tmp_a $PATH)
+          fi
+          export PATH
+       elif [ "$env" == "LD_LIBRARY_PATH" ]; then
+          if [ -n "$tmp_a" -a -n "$tmp_b" ]; then
+              LD_LIBRARY_PATH=$(_k_env_remove ${tmp_a} ${LD_LIBRARY_PATH})
+              LD_LIBRARY_PATH=$(_k_env_remove ${tmp_b} ${LD_LIBRARY_PATH})
+          elif [ -n "$tmp_a" ]; then
+              LD_LIBRARY_PATH=$(_k_env_remove ${tmp_a} ${LD_LIBRARY_PATH})
+          elif [ -n "$tmp_b" ]; then
+              LD_LIBRARY_PATH=$(_k_env_remove ${tmp_b} ${LD_LIBRARY_PATH})
+          fi
+          export LD_LIBRARY_PATH
+       elif [ "$env" == "MANPATH" ]; then
+          if [ -n "$tmp_a" -a -n "$tmp_b" ]; then
+              MANPATH=$(_k_env_remove ${tmp_a} ${MANPATH})
+              MANPATH=$(_k_env_remove ${tmp_b} ${MANPATH})
+          elif [ -n "$tmp_a" ]; then
+              MANPATH=$(_k_env_remove ${tmp_a} ${MANPATH})
+          elif [ -n "$tmp_b" ]; then
+              MANPATH=$(_k_env_remove ${tmp_b} ${MANPATH})
+          fi
+          export MANPATH
+       elif [ "$env" == "LM_LICENSE_FILE" ]; then
+          if [ -n "$tmp_a" -a -n "$tmp_b" ]; then
+              LM_LICENSE_FILE=$(_k_env_remove ${tmp_a} ${LM_LICENSE_FILE})
+              LM_LICENSE_FILE=$(_k_env_remove ${tmp_b} ${LM_LICENSE_FILE})
+          elif [ -n "$tmp_a" ]; then
+              LM_LICENSE_FILE=$(_k_env_remove ${tmp_a} ${LM_LICENSE_FILE})
+          elif [ -n "$tmp_b" ]; then
+              LM_LICENSE_FILE=$(_k_env_remove ${tmp_b} ${LM_LICENSE_FILE})
+          fi
+          export LM_LICENSE_FILE
+       fi
+    done
+
+    else
+       echo "File not found"
+    fi
+}
+
+_k_env_vimrc() {
+   #set tabstop=4
+   #set cindent
+   echo "set title
+set laststatus=2
+set ts=4 sw=4
+set visualbell
+set ruler
+syntax on " > ~/.vimrc
+}
+
+_k_env_unset() {
+   local _set
+   for _set in $*; do
+       unset $_set
+   done
+}

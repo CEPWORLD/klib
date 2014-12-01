@@ -1,0 +1,123 @@
+#Kage Library  - drbd
+#$lib_ver$:0.0.2
+
+_k_loaded_drbd(){
+   local null
+}
+
+_k_drbd_help() {
+    local help="Library drbd's  help
+Usage) ${FUNCNAME} "
+    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    echo "Library : drbd "
+}
+
+
+_k_drbd(){
+    [ -n "$_K_LIB" ] || error_return "_K_LIB not found" || return 1
+    local help="Library drbd's start function
+Usage) ${FUNCNAME} "
+    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    ### start(open) library code here ###
+}
+
+
+#_k_drbd_close(){
+#    local help=" Library drbd's closing function
+#Usage) ${FUNCNAME} "
+#    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+#    ### close library code here ###
+#}
+
+
+#_k_drbd_example(){
+#    local help="help
+#Usage) ${FUNCNAME} "
+#    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+#    ### your code here ###
+#}
+
+     
+error_exit() {
+   echo "$*"
+   exit
+}
+
+_k_drbd_find_conf() {
+   local start end  file
+   start=$1
+   end=$2
+   file=$3
+   [ -n "$file" ] || error_exit "find_conf <host> <file>"
+   [ -f $file ] || error_exit "$file not found"
+   sed -n "
+/$start/,/$end/ {
+     s/#.*//
+     s/[ ^I]*$//
+     /^$/ d
+     p
+}
+    " $file
+}
+
+
+_k_drbd_find_conf_value() {
+    local host find file
+    host=$1
+    find=$2
+    file=$3
+    find_conf "$host" "}" "$file" | awk -v find=$find '{if($1==find) print $2}' | sed -e "s/'//g" -e "s/;//g"
+}
+
+_k_drbd_find_drbd_value() {
+    local find
+    find=$1
+    if [ "$find" == "version" ]; then
+      cat /proc/drbd | grep "^version:" | awk '{print $2}'
+    else
+      for ii in $(cat /proc/drbd | grep "^ 0:"); do
+        [ "$find" == "connect" ] && find=cs
+        [ "$find" == "state" ] && find=ro
+        [ "$find" == "update" ] && find=ds
+        echo $ii| awk -F: -v find=$find '{if($1==find) print $2}'
+      done
+    fi
+}
+
+_k_drbd_convert_hostname() {
+  local _hostname
+  _hostname=$1
+  echo $(echo $_hostname | sed "s/[1-2]/$(( $(( $(echo $_hostname | cut -c ${#_hostname}-)%2 )) + 1 ))/g")
+}
+
+_k_disk_check_dev() {
+    local dev
+    dev=$1
+    [ -n "$dev" ] || return 1
+    ls $dev >& /dev/null || return 1
+    if [ -b $dev ]; then
+           state=$(file -s $dev | awk '{print $2}' | sed "s/[,/]/ /g" | awk '{print $1}')
+           if [ "$state" == "data" ]; then
+               # just partition device (not filesystem)
+               return 2
+           elif [ "$state" == "writable" ]; then
+               # No partition
+               return 1
+           elif [ "$state" == "x86" ]; then
+               # Dos partition
+               echo "dos"
+               return 0
+           elif [ "$state" == "Linux" ]; then
+               # Linux partition
+               file -s $dev | awk '{if($3=="swap") printf "swap"; else print $5;}'
+               return 0
+           elif [ "$state" == "SGI" ]; then
+               # Linux partition
+               file -s $dev | awk '{print $3}'
+               return 0
+           fi
+    else
+           k_log "both" "$dev is not block device"
+           return 3
+    fi
+}

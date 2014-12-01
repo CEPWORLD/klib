@@ -1,0 +1,337 @@
+#Kage Library  - pxe
+#$lib_ver$:0.0.11
+
+#include net
+#include cmd
+#include dhcp
+
+_k_loaded_pxe(){
+   local null
+}
+
+_k_pxe_help() {
+    local help="Library pxe's  help
+Usage) ${FUNCNAME} "
+    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    echo "It is working like as daemon.
+So, If you stop this script then it will be clear pxe server(rollback) "
+}
+
+_k_pxe(){
+    [ -n "$_K_LIB" ] || error_return "_K_LIB not found" || return 1
+    local help="Library pxe's start function
+Usage) ${FUNCNAME} "
+    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+
+    ### start(open) library code here ###
+    _k_libs temp >/dev/null || error_return "requirement library : temp" || return 1
+    unset _K_PXE_SDAEMON _K_PXE_RDAEMON _K_PXE_HOME _K_PXE_SERVICE_LIST
+    _K_PXE_HOME=$(_k_temp_open) 
+}
+
+
+#_k_pxe_close(){
+#    local help=" Library pxe's closing function
+#Usage) ${FUNCNAME} "
+#    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+#    ### close library code here ###
+#}
+
+
+#_k_pxe_example(){
+#    local help="help
+#Usage) ${FUNCNAME} "
+#    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+#    ### your code here ###
+#}
+
+     
+### Start Deaemon
+_k_pxe_daemons_start() {
+    if ps -ef |grep "in\.tftpd" |grep -v grep > /dev/null  2>&1 ; then
+       kill -9 $(echo $(ps -ef |grep "in\.tftpd" |grep -v grep | awk '{print $2}'))
+    else
+       if ! chkconfig --list |grep tftp | grep on |grep -v grep>& /dev/null; then
+          chkconfig tftp on
+          _K_PXE_SDAEMON="tftp $_K_PXE_SDAEMON"
+       fi
+    fi
+
+    rm -f /var/lib/dhcpd/*
+    if ps -ef |grep dhcpd |grep -v grep > /dev/null  2>&1 ; then
+        /etc/init.d/dhcpd force-reload
+        _K_PXE_RDAEMON="dhcpd $_K_PXE_RDAEMON"
+    else
+        /etc/init.d/dhcpd start
+        _K_PXE_SDAEMON="dhcpd $_K_PXE_SDAEMON"
+    fi
+
+    if ps -ef |grep xinetd |grep -v grep > /dev/null  2>&1 ; then
+        service xinetd restart
+        _K_PXE_RDAEMON="xinetd $_K_PXE_RDAEMON"
+    else
+        service xinetd start
+        _K_PXE_SDAEMON="xinetd $_K_PXE_SDAEMON"
+    fi
+
+    if [ -f /etc/init.d/rpcbind ]; then
+        if ! ps -ef |grep "rpcbind" |grep -v grep >& /dev/null; then
+            _K_PXE_SDAEMON="rpcbind $_K_PXE_SDAEMON"
+            service rpcbind start
+        fi
+    fi
+    if [ -f /etc/init.d/rpcidmap ]; then
+        if ! ps -ef |grep "rpc\.idmapd" |grep -v grep >& /dev/null; then
+            _K_PXE_SDAEMON="rpcidmapd $_K_PXE_SDAEMON"
+            service rpcidmapd start
+        fi
+    fi
+    if ps -ef |grep nfsd |grep -v grep > /dev/null  2>&1 ; then
+        exportfs -ra
+    else
+        if [ -f /etc/init.d/nfsserver ]; then
+            /etc/init.d/nfsserver start
+            _K_PXE_SDAEMON="nfsserver $_K_PXE_SDAEMON"
+        elif [ -f /etc/init.d/nfs ]; then
+            /etc/init.d/nfs start
+            _K_PXE_SDAEMON="nfs $_K_PXE_SDAEMON"
+        else
+           echo "NFS daemon not found"
+        fi
+    fi
+}
+
+_k_pxe_daemons_stop() {
+    local daemon
+    for daemon in $_K_PXE_SDAEMON; do
+
+       if [ "$daemon" == "tftp" ]; then
+            chkconfig tftp off
+       else
+            service $daemon stop
+       fi
+    done
+}
+
+_k_pxe_change_dev() {
+  local ks_file dev org_dev tftp_default
+  ks_file=$1
+  dev=$2
+  tftp_default=$3
+  [ -f $ks_file ] || error_return "$ks_file not found" || return 1
+  [ -n "$dev" ] || error_return "dev not found" || return 1
+
+  org_dev=$(grep "\-\-device=" $ks_file | awk '{print $3}')
+  sed "s/$org_dev/--device=$dev/g" < $ks_file > ${ks_file}~
+  cp $ks_file $ks_file.orig
+  mv ${ks_file}~ $ks_file
+
+  if [ -n "$tftp_default" ]; then
+      [ -f $tftp_default ] || error_return "$tftp_default not found" || return 1
+      default_dev=( $(grep -n "ks.mgmt2.cfg" $tftp_default | awk '{print $1 $4}' | sed "s/:/ /g") )
+      sed "${default_dev[0]} s/${default_dev[1]}/ksdevice=$dev/g" < $tftp_default > ${tftp_default}~
+      mv ${tftp_default}~ $tftp_default
+  fi
+}
+
+_k_pxe_show_dev() {
+  local ks_dir
+  ks_dir=$1
+  [ -d $ks_dir ] || error_return "$ks_dir not found" || return 1
+  for ks_f in $(ls $ks_dir/ks.*.cfg); do
+      echo "$(basename $ks_f) : $(grep "\-\-device=" $ks_f | awk '{print $3}' | awk -F= '{print $2}')"
+  done
+}
+
+pxe_set() {
+
+
+   local dev ip netmask pxe_home
+   dev=$1
+   ip=$2
+   netmask=$3
+   PXE_HOME=$4
+   _k_net_check_dev $dev || error_return "$dev not found" || return 1
+   ifconfig $dev $ip netmask $netmask up
+   
+
+    _k_cmd_check_os
+    if [ "$OS_NAME" == "rhel" -o "$OS_NAME" == "centos" ]; then
+      if [ "$(echo "$OS_RELEASE <= 5.5" | bc)" == "1" ];then
+        #rhel5x
+        package_list="tftp-server tftp dhcp OpenIPMI nfs-utils"
+      else
+        #rhel6x
+        package_list="tftp-server tftp dhcp OpenIPMI rpcbind nfs-utils"
+      fi
+    else
+      #suse
+      package_list="tftp dhcp-server nfs-kernel-server"
+    fi
+    for pl in $package_list; do
+       rpm -qa --queryformat '%{NAME}\n' | grep -w "^${pl}$" >& /dev/null || error_return "requirement package \"$pl\"" || return 1
+    done
+
+    [ -n "$PXE_HOME" ] || PXE_HOME=$_K_PXE_HOME
+    [ -d $PXE_HOME/etc ] || mkdir -p $PXE_HOME/etc
+    [ -f /etc/exports ] && cat /etc/exports > $PXE_HOME/etc/exports || echo > $PXE_HOME/etc/exports
+    echo "$KS_DIR *(rw,sync,no_root_squash)" >> $PXE_HOME/etc/exports 
+
+    #msg
+    TB_BASE_PXE_HOME=$PXE_HOME/tftpboot
+    [ -d $TB_BASE_PXE_HOME ] || mkdir -p $TB_BASE_PXE_HOME
+    echo "
+
+                09Welcome to 0cPXE BOOT Server09 -$(echo $version) !07
+0a
+07
+
+Enter number of the Operation System you wish to install:
+
+0.  Local Machine
+" > $TB_BASE_PXE_HOME/msgs.head
+
+    echo "
+
+
+05[F1-Main] 07" >> $TB_BASE_PXE_HOME/msgs/boot.msg.tail
+
+
+    #pxelinux.0
+    [ -d $TB_BASE_PXE_HOME/pxelinux.cfg ] || mkdir -p $TB_BASE_PXE_HOME/pxelinux.cfg
+    if [ -f $TB_BASE_PXE_HOME/pxelinux.0 ]; then
+        pxelinux_file=$TB_BASE_PXE_HOME/pxelinux.0
+    elif [ -f /opt/ace/share/pxelinux.0 ]; then
+        pxelinux_file=/opt/ace/share/pxelinux.0
+    elif locate pxelinux.0 | grep "pxelinux\.0" >& /dev/null ; then
+        pxelinux_file=$(locate pxelinux.0 | grep "pxelinux\.0"|head -n 1)
+    else
+        error_return "\"pxelinux.0\" not found " || return 1
+    fi
+    [ -f $TB_BASE_PXE_HOME/pxelinux.0 ] || \cp -af $pxelinux_file $TB_BASE_PXE_HOME
+
+    #pxelinux.cfg
+    if [ -n "$DEST" ] ; then
+        echo "default local
+timeout 100
+prompt 1
+display msgs/boot.msg
+F1 msgs/boot.msg
+
+serial  1,19200
+
+label local
+  localboot 1
+
+label 0
+  localboot 1
+        " > $TB_BASE_PXE_HOME/pxelinux.cfg/default.head
+    fi
+
+    echo "set ${os} with ${os[1]}"
+    echo "$i. ${os}  - $desc" >> $TB_BASE_PXE_HOME/msgs/boot.msg.${os}
+    ks_name="ks.${os}.cfg"
+    [ -d $ISO_EXP_DIR/${os} ] || mkdir -p $ISO_EXP_DIR/${os}
+    _k_cmd_mount ${os} $ISO_EXP_DIR/${os}
+    echo "$ISO_EXP_DIR/${os[0]}  *(rw,sync,no_root_squash)" >> $PXE_HOME/etc/exports.${os}
+    [ -d $TB_BASE_PXE_HOME/${os[0]} ] ||  mkdir -p  $TB_BASE_PXE_HOME/${os[0]}
+    
+    if echo "${os[*]}" | grep -e suse -e SUSE -e SLES -e sles >& /dev/null ; then
+       cp -fa $ISO_EXP_DIR/${os[0]}/boot/x86_64/loader/initrd $TB_BASE_PXE_HOME/${os[0]}
+       cp -fa $ISO_EXP_DIR/${os[0]}/boot/x86_64/loader/linux $TB_BASE_PXE_HOME/${os[0]}
+       kernel=linux
+       initrd=initrd
+       echo "
+label $i
+  kernel ${os[0]}/$kernel
+  append load_ramdisk=1 initrd=${os[0]}/$initrd splash=silent showopts ramdisk_size=8192 init=linuxrc autoyast=nfs://$IP$KS_DIR/$ks_name netdevice=$DEST install=nfs://$IP/$ISO_EXP_DIR/${os[0]}
+        " >> $TB_BASE_PXE_HOME/pxelinux.cfg/default.${os}
+    else
+       cp -fa $ISO_EXP_DIR/${os[0]}/isolinux/initrd.img $TB_BASE_PXE_HOME/${os[0]}
+       cp -fa $ISO_EXP_DIR/${os[0]}/isolinux/vmlinuz $TB_BASE_PXE_HOME/${os[0]}
+       kernel=vmlinuz
+       initrd=initrd.img
+       echo "
+label $i
+  kernel ${os[0]}/$kernel
+  append initrd=${os[0]}/$initrd ksdevice=$DEST ramdisk_size=8192 ks=nfs:$IP:$KS_DIR/$ks_name
+        " >> $TB_BASE_PXE_HOME/pxelinux.cfg/default.${os}
+    fi
+
+    ### DHCP Set
+    [ -d $PXE_HOME/etc ] || mkdir -p $PXE_HOME/etc
+    [ -n "$TB_EXT" ] && pxelinux=/$TB_EXT/pxelinux.0 || pxelinux=/pxelinux.0
+
+    echo "ddns-update-style interim;
+allow booting;
+allow bootp;
+
+class \"pxeclients\" {
+   match if substring(option vendor-class-identifier, 0, 9) = \"PXEClient\";
+}
+
+subnet $NETWORK netmask $NETMASK {
+   range $(echo $NETWORK | awk -F. '{printf "%s.%s.%s.200",$1,$2,$3}') $(echo $NETWORK | awk -F. '{printf "%s.%s.%s.250",$1,$2,$3}');
+   next-server $IP;
+   option routers $IP;
+   option domain-name-servers $IP;
+   filename \"$pxelinux\";
+}
+
+    " > $PXE_HOME/etc/dhcpd.conf
+
+    if [ -f /etc/dhcpd.conf ]; then
+        cat /etc/dhcpd.conf | while read line ; do echo $line |grep "^subnet" >& /dev/null && chk=1; if [ "$chk" == "1" ]; then echo "$line"; fi ; done >> $PXE_HOME/etc/dhcpd.conf
+    fi
+
+    if cmp $PXE_HOME/etc/dhcpd.conf /etc/dhcpd.conf >& /dev/null; then
+        cat /proc/mounts | grep dhcpd.conf >& /dev/null  || mount -o bind $PXE_HOME/etc/dhcpd.conf /etc/dhcpd.conf
+    else
+        mount -o bind $PXE_HOME/etc/dhcpd.conf /etc/dhcpd.conf
+    fi
+    if [ -d /etc/dhcp ]; then
+        if ! cmp /etc/dhcp/dhcpd.conf /etc/dhcpd.conf >& /dev/null; then
+            mv /etc/dhcp/dhcpd.conf /etc/dhcp/dhcpd.conf.nfs-ha
+            ln -sf /etc/dhcpd.conf /etc/dhcp/dhcpd.conf
+        fi
+    fi
+
+    ### mount ks, export, etc environemnt
+    [ -f /etc/exports ] || touch /etc/exports
+    if cmp $PXE_HOME/etc/exports /etc/exports >& /dev/null; then
+        cat /proc/mounts | grep exports >& /dev/null  || mount -o bind $PXE_HOME/etc/exports /etc/exports
+    else
+        mount -o bind $PXE_HOME/etc/exports /etc/exports
+    fi
+
+    ### tftpboot
+    [ -d $TB_BASE/$TB_EXT ] || mkdir -p $TB_BASE/$TB_EXT
+    if cat /proc/mounts | grep "$TB_BASE/$TB_EXT" >& /dev/null; then
+        if ! cmp $TB_BASE_PXE_HOME/pxelinux.cfg/default $TB_BASE/$TB_EXT/pxelinux.cfg/default >& /dev/null; then
+            mount -o bind $TB_BASE_PXE_HOME $TB_BASE/$TB_EXT
+        fi
+    else
+         mount -o bind $TB_BASE_PXE_HOME $TB_BASE/$TB_EXT
+    fi
+    _k_pxe_daemons_start
+}
+
+
+_k_pxe_unset() {
+    _umount /etc/exports 2>/dev/null
+    sleep 2
+    exportfs -ra
+
+    #stop daemons
+    _k_pxe_daemons_stop
+
+    sleep 2
+    _umount /etc/dhcpd.conf 2> /dev/null
+    _umount $TB_BASE/$TB_EXT 2>/dev/null
+
+    [ -d $TB_BASE/$TB_EXT ] &&  rmdir $TB_BASE/$TB_EXT >/dev/null
+
+    grep -v -e "^TB_EXT=" -e "^ISO_EXP_DIR=" -e "^DEST=" -e "^PXE_HOME=" -e "^TB_BASE="  -e "^DAEMONS=" -e "^RDAEMONS=" -e "^MODE=" $config  > ${config}~
+    \mv ${config}~ $config
+
+}

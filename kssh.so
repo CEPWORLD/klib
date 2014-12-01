@@ -1,0 +1,252 @@
+#Kage Library 
+#$lib_ver$:0.1.40
+#   . $(dirname $0)/klib.so
+#_k_ssh(){
+#}
+#_k_ssh_close(){
+#}
+
+_k_loaded_ssh(){
+   local null
+}
+
+_k_ssh_ssh() {
+  local timeout opt chk background passwdless
+  opt=($*)
+  for ((i=0;i<${#opt[*]}; i++)); do
+      if [ "${opt[$i]}" == "-t" ]; then
+         i=$(($i+1))
+         timeout=" -o ConnectTimeout=${opt[$i]}"
+      elif [ "${opt[$i]}" == "-b" ]; then
+         background="-f"
+      elif [ "${opt[$i]}" == "-p" ]; then
+         passwdless=" -o PasswordAuthentication=no"
+      elif [ "${opt[$i]}" == "--" ]; then
+         chk=1
+         break
+      fi
+  done
+  [ "$chk" == "1" ] || error_exit "_k_ssh_ssh [<-t <time>>] [ <-b> ] [ <-p> ] -- <hostname> [<commands>]"
+  shift $(($i + 1))
+
+  ssh $timeout $passwdless $background $*
+}
+
+_k_ssh_check_passwordless() {
+  local dest_host
+  dest_host=$1
+  if [ ! -n "$dest_host" ]; then
+      dest_host=$(hostname)
+      ssh_hostname=$(ssh -o PasswordAuthentication=no localhost hostname)
+  else
+      ssh_hostname=$(ssh -o PasswordAuthentication=no $dest_host hostname)
+  fi
+  if [ "$dest_host" != "$ssh_hostname" ]; then
+    echo "Please configure the $dest_host server for passwordless SSH access."
+    return 1
+  fi
+}
+
+_k_ssh_set_passwordless_config() {
+  localhost id
+  id=$1
+  [ -n "$id" ] || id=root
+
+  [ -d ~$id/.ssh ] || mkdir -p ~$id/.ssh
+
+  if [ ! -f ~$id/.ssh/authorized_keys ]; then
+    echo y | ssh-keygen  -t rsa -f ~$id/.ssh/id_rsa -C '' -N '' > /dev/null 2>&1 || error_exit "Unable to create new SSH keys to $id"
+    cp -f ~$id/.ssh/id_rsa.pub ~$id/.ssh/authorized_keys
+    chmod 600 ~$id/.ssh/authorized_keys
+    rm -f ~$id/.ssh/known_hosts
+  fi
+
+  if [ -f ~$id/.ssh/config ]; then
+    grep -w CheckHostIP ~$id/.ssh/config || ( echo ' host *
+    ForwardAgent yes
+    ForwardX11 no
+    StrictHostKeyChecking no
+    CheckHostIP no'  > ~$id/.ssh/config
+    chmod 644 ~$id/.ssh/config )
+  else
+    echo ' host *
+    ForwardAgent yes
+    ForwardX11 no
+    StrictHostKeyChecking no
+    CheckHostIP no'  > ~$id/.ssh/config
+    chmod 644 ~$id/.ssh/config
+  fi
+
+  if [ "$(id -u)" == "0" -a "$id" == "root" ]; then
+      _k_ssh_check_passwordless
+  else
+      chown $id:$(id $id -g -n) ~$id/.ssh -R
+  fi
+}
+
+_k_ssh_set_hostbase_config() {
+  local id
+  id=$1
+  [ -n "$id" ] || id=root
+  #config file
+  root_config=~$id/.ssh/config
+  if [ -f $root_config ]; then
+     grep -v -e EnableSSHKeysign -a -v -e HostbasedAuthentication -a -v -e CheckHostIP $root_config > $root_config~
+     mv $root_config~ $root_config
+
+     echo "        EnableSSHKeysign yes
+        HostbasedAuthentication no
+        CheckHostIP no
+     " >>  $root_config
+  else
+     echo "
+host *
+    ForwardAgent yes
+    ForwardX11 no
+    StrictHostKeyChecking no
+    CheckHostIP no
+    EnableSSHKeysign yes
+    HostbasedAuthentication no
+    " > $root_config
+  fi
+}
+
+#_k_ssh_set_hostbase [ <mgmtname> ]
+_k_ssh_set_hostbase() {
+  local SSH_BASE EQUIV mgmt
+  mgmt=$1
+   
+  [ "$(id -u)" == "0" ] || error_exit "must be root account"
+  [ -n "$mgmt" ] || mgmt=$(hostname)
+
+  SSH_BASE=/etc/ssh
+  EQUIV=/etc/hosts.equiv
+
+  #sshd_config
+  grep -v -e 'IgnoreRhosts' -a -v -e 'RhostsRSAAuthentication' -a -v -e 'HostbasedAuthentication' -a -v -e 'IgnoreUserKnownHosts' $SSH_BASE/sshd_config > $SSH_BASE/sshd_config~
+  mv  $SSH_BASE/sshd_config  $SSH_BASE/sshd_config.org
+  mv  $SSH_BASE/sshd_config~  $SSH_BASE/sshd_config
+  echo "IgnoreRhosts yes
+RhostsRSAAuthentication no
+IgnoreUserKnownHosts yes
+HostbasedAuthentication yes" >> $SSH_BASE/sshd_config
+  chmod 600 $SSH_BASE/sshd_config
+
+  #hosts.equiv
+  [ -f $EQUIV ] || touch $EQUIV
+  echo $mgmt | sed "s/\,/\n/g" > $EQUIV
+
+  #ssh_config
+  grep -v -e EnableSSHKeysign -a -v -e HostbasedAuthentication -a -v -e CheckHostIP $SSH_BASE/ssh_config > $SSH_BASE/ssh_config~
+  mv $SSH_BASE/ssh_config $SSH_BASE/ssh_config.org
+  mv $SSH_BASE/ssh_config~ $SSH_BASE/ssh_config
+
+  echo "        EnableSSHKeysign yes
+        HostbasedAuthentication yes
+        CheckHostIP no
+  " >> $SSH_BASE/ssh_config
+
+
+  chmod 644 $SSH_BASE/ssh_config
+
+  #config file
+  _k_ssh_set_hostbase_config root
+
+  service sshd restart
+}
+
+
+_k_ssh_cluster_key() {
+  local cluster
+  cluster=$1
+  max_hosts=$2
+  hostname_id_length=$3
+  mgmt_name=$4
+  cluster_ssh=$5
+  HOST_BASE=$6
+  (( $# < 3 || $# > 6 )) && error_exit "$(basename $0) <cluster name> <host num> <hostname id length:04> [<cluster ssh path>] [<host base:1>]"
+
+  cluster_ssh_tmp=/etc/ssh/cluster/$cluster
+  [ -d $cluster_ssh_tmp ] || mkdir -p $cluster_ssh_tmp
+
+  ###################
+  # Global SSH-key
+  ssh_rsa=$cluster_ssh_tmp/ssh_host_rsa_key
+  ssh_dsa=$cluster_ssh_tmp/ssh_host_dsa_key
+  ssh_key=$cluster_ssh_tmp/ssh_host_key
+  ssh_rsa_pub=$cluster_ssh_tmp/ssh_host_rsa_key.pub
+
+  mgmt_ssh_rsa_pub=/etc/ssh/ssh_host_rsa_key.pub
+  mgmt_ssh_known_hosts=/etc/ssh/ssh_known_hosts
+  tmp_mgmt_ssh_known_hosts=/etc/ssh/ssh_known_hosts~
+
+  echo y | ssh-keygen -q -t rsa -f $ssh_rsa -C '' -N ''
+  echo y | ssh-keygen -q -t rsa -f $ssh_dsa -C '' -N ''
+  echo y | ssh-keygen -q -t rsa -f $ssh_key -C '' -N ''
+
+  [ -n "$mgmt_name" ] || mgmt_name=$(hostname)
+  _ssh_key=$(cat $ssh_rsa_pub)
+
+  for ((i=1; i<= $max_hosts; i++)); do
+      host=$(printf "${cluster}%${hostname_id_length}d" $i)
+      echo "$host $_ssh_key" >> $cluster_ssh_tmp/ssh_known_hosts
+      if [ "$HOST_BASE" == "1" ]; then
+         echo "$host" >> $cluster_ssh_tmp/hosts.equiv
+      fi
+  done
+  cat $cluster_ssh_tmp/ssh_known_hosts >> ${mgmt_ssh_known_hosts}
+
+  if [ "$HOST_BASE" == "1" ]; then
+      grep -v "^${cluster}[0-9]" /etc/hosts.equiv > /etc/hosts.equiv~
+      mv /etc/hosts.equiv~ /etc/hosts.equiv
+      cat $cluster_ssh_tmp/hosts.equiv >> /etc/hosts.equiv
+      if [ -d "$cluster_ssh" ]; then
+          echo $mgmt_name | sed "s/\,/\n/g" > $(dirname $cluster_ssh)/hosts.equiv
+          cat $cluster_ssh_tmp/hosts.equiv >> $(dirname $cluster_ssh)/hosts.equiv
+      fi
+      rm -f $cluster_ssh_tmp/hosts.equiv
+  fi
+
+  if [ -d $cluster_ssh ]; then
+      cp -f $cluster_ssh_tmp/* $cluster_ssh
+      echo "$mgmt_name $(cat $mgmt_ssh_rsa_pub)" >> $cluster_ssh/ssh_known_hosts
+  fi
+
+  rm -fr $cluster_ssh_tmp
+}
+
+
+_k_ssh_key_del() {
+  local cluster
+  (( $# != 1 )) && exit_error "$(basename $0) <cluster name>"
+  cluster=$1
+
+  ssh_key_dir=/etc/ssh
+  ssh_key_lock=$ssh_key_dir/lock
+  ssh_key_file=$ssh_key_dir/ssh_known_hosts
+  ssh_key_file_tmp=$ssh_key_dir/ssh_known_hosts.$cluster
+
+
+  PID=$$
+  echo $PID >> $ssh_key_lock ||  error_exit "Can't create lock file"
+
+  while [ "$(head -n 1 $ssh_key_lock)" != "$PID" ]; do
+    sleep 1
+  done
+
+  #del global ssh-key
+  sed -e "/^${cluster}[0-9]/d" < $ssh_key_file >  $ssh_key_file_tmp
+  cp -f $ssh_key_file $ssh_key_file.$(date +%Y%m%d-%H%M)
+  mv $ssh_key_file_tmp $ssh_key_file
+
+  if [ -f /etc/hosts.equiv ] ; then
+     sed -e "/^${cluster}[0-9]/d" < /etc/hosts.equiv > /etc/hosts.equiv~
+     mv /etc/hosts.equiv~ /etc/hosts.equiv
+  fi
+
+  sleep 1
+  cat $ssh_key_lock | grep -v $PID > ${ssh_key_lock}~
+  mv ${ssh_key_lock}~ $ssh_key_lock
+}
+
+

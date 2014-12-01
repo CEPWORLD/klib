@@ -1,0 +1,148 @@
+#Kage Library  - temp
+#$lib_ver$:0.1.1
+_k_loaded_temp(){
+   local null
+}
+ 
+_k_temp_help() {
+   echo "if you are using temporary files/directory from this library
+then automatically clean up temporary files/directories when exit the script
+
+example)
+add below 
+-------------------------------------------
+#/bin/sh
+_K_HOME=/your/path/for/this/klib
+_K_LIB=\$_K_HOME/klib
+. \$_K_LIB/klib.so
+_k_load temp
+
+#your code here
+temp=\$(_k_temp_open)
+touch \$temp
+temp=\$(_k_temp_open)
+mkdir -p \$temp
+temp=\$(_k_temp_open -b /your/temp/path)
+touch \$temp
+temp=\$(_k_temp_open -b /your/temp/path -f)
+echo abc > \$temp
+temp=\$(_k_temp_open -d)
+mount -t iso9660 /your/iso/file  \$temp
+---------------------------------------------
+
+"
+}
+
+_k_temp(){
+   unset _K_TEMP_PIPE
+   [ -f $0 ] && base_name=$(basename $0) || base_name=${FUNCNAME}
+   export _K_TEMP_PIPE=/tmp/$base_name.$$
+   [ -f $_K_TEMP_PIPE ] && \rm -f $_K_TEMP_PIPE
+}
+
+_k_temp_open_v1(){
+   local base_dir opt ii  temp_dir
+   base_dir=$1
+   opt=$2
+   [ -n "$base_dir" ] || base_dir=/tmp
+   [ -f $0 ] && base_name=$(basename $0) || base_name=${FUNCNAME}
+   for ((ii=0; ii<100; ii++)); do
+        temp_dir=$(mktemp -u ${base_dir}/${base_name}-XXXXXXXXXXXXXXXX)
+        [ -f $temp_dir -o -d $temp_dir ] || break
+   done
+   echo "$temp_dir" >> $_K_TEMP_PIPE
+
+   if [ "$opt" == "-t" ]; then
+        [ -d $(dirname $temp_dir) ] || mkdir -p $(dirname $temp_dir)
+        touch  $temp_dir
+   elif [ "$opt" == "-d" ]; then
+        mkdir -p $temp_dir
+   fi
+       
+   echo $temp_dir
+}
+
+_k_temp_open(){
+   [ -n "$_K_TEMP_PIPE" ] || error_return "_K_TEMP_PIPE not found" || return 1
+   local help="
+create temporary name
+
+Usage) ${FUNCNAME} [ <opt> [<string>] ...]
+
+ -- base path / name --
+  -b <base path> : default (null) is /tmp
+  -n <base name> : default (null) is your script file name
+
+ -- file/dir create option --
+                 : default (null) is create temporary string
+  -f             : create temporary file
+  -d             : create temporary directory
+"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   local base_dir opt ii  temp_dir input ii base_name
+   input=($*)
+   for ((ii=0;ii<${#input[*]};ii++)); do
+       if [ "${input[$ii]}" == "-b" ]; then
+           base_dir=${input[$(($ii+1))]}
+           ii=$(($ii+1))
+       elif [ "${input[$ii]}" == "-n" ]; then
+           base_name=${input[$(($ii+1))]}
+           ii=$(($ii+1))
+       elif [ "${input[$ii]}" == "-f" ]; then
+           opt="-f"
+       elif [ "${input[$ii]}" == "-d" ]; then
+           opt="-d"
+       fi
+   done
+   [ -n "$base_dir" ] || base_dir=/tmp
+   if [ ! -n "$base_name" ]; then
+        [ -f $0 ] && base_name=$(basename $0) || base_name=${FUNCNAME}
+   fi
+   for ((ii=0; ii<100; ii++)); do
+        temp_dir=$(mktemp -u ${base_dir}/${base_name}-XXXXXXXXXXXXXXXX)
+        [ -f $temp_dir -o -d $temp_dir ] || break
+   done
+   echo "$temp_dir" >> $_K_TEMP_PIPE
+
+   if [ "$opt" == "-f" ]; then
+        [ -d $(dirname $temp_dir) ] || mkdir -p $(dirname $temp_dir)
+        touch  $temp_dir
+   elif [ "$opt" == "-d" ]; then
+        mkdir -p $temp_dir
+   fi
+
+   echo $temp_dir
+}
+
+_k_temp_close(){
+   [ -n "$_K_TEMP_PIPE" ] || error_return "_K_TEMP_PIPE not found" || return 1
+   local help="
+automatically clean up temporary files/directories when close this library or exit your script
+
+Usage) 
+1) automatically execute this function when exit your script
+2) ${FUNCNAME} : for manually run this function
+3) ${FUNCNAME} <temporary directory/file> [...] : for cleanup your personal temporary file/dir
+"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   local temp_dir ii
+   temp_dir=($*)
+   (( ${#temp_dir[*]} > 0 )) || temp_dir=( $([ -f $_K_TEMP_PIPE ] && cat $_K_TEMP_PIPE) )
+   if (( ${#temp_dir[*]} > 0 )); then
+       for (( ii=0; ii<${#temp_dir[*]}; ii++)); do
+           if [ -f ${temp_dir[$ii]} ]; then
+                \rm -f ${temp_dir[$ii]} 
+           elif [ -d ${temp_dir[$ii]} ]; then
+               if  _k_lexec cmd _k_cmd_umount ${temp_dir[$ii]} >/dev/null; then
+                   \rmdir ${temp_dir[$ii]} || error_return "${temp_dir[$ii]} directory is not empty" || return 1
+               else
+                   \rm -fr ${temp_dir[$ii]} 
+               fi
+           fi
+       done
+   fi
+   [ -f $_K_TEMP_PIPE ] && \rm -f $_K_TEMP_PIPE
+   unset _K_TEMP_PIPE
+}
+     
+trap _k_temp_close EXIT

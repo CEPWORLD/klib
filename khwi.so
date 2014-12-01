@@ -1,0 +1,178 @@
+#Kage Library  - hwi
+#$lib_ver$:0.0.8
+_k_loaded_hwi(){
+   local null
+}
+#_k_hwi(){
+#   start code here
+#}
+#_k_hwi_close(){
+# close code here
+#}
+_k_hwi_help() {
+    echo " Hardware Information library"
+}
+     
+_k_hwi_eth_list() {
+    ls /sys/class/net |grep "^[e|i]"
+}
+
+_k_hwi_eth_mac() {
+    if [ -f /sys/class/net/$1/address ]; then
+        cat /sys/class/net/$1/address
+        return 0
+    else
+        return 1
+    fi
+}
+
+_k_hwi_eth_drivers_old() {
+    if [ -d /sys/bus/pci/devices  ]; then
+       for dev in /sys/bus/pci/devices/*; do
+         [ "$(cat $dev/class)" != "0x020000" ] && continue
+         vendor=$(cat $dev/vendor | sed 's/^0x//')
+         device=$(cat $dev/device | sed 's/^0x//')
+         awk "\$2 == \"0x0000$vendor\" && \$3 == \"0x0000$device\" { print \$1; }" < /lib/modules/$(uname -r)/modules.pcimap
+       done
+       return 0
+    else
+       return 1
+    fi
+}
+
+_k_hwi_eth_drivers() {
+   local _net
+   _net=$1
+   ETH_DEV=( $(ls -l /sys/class/net/$_net/device/driver) )
+   echo $(basename ${ETH_DEV[$((${#ETH_DEV[*]}-1))]})
+}
+
+_k_hwi_eth_state() {
+   local _net
+   _net=$1
+   echo $(cat /sys/class/net/$_net/operstate)
+}
+
+_k_hwi_cpu_num() {
+    [ -d /sys/class/cpuid ] && echo $(ls /sys/class/cpuid | wc -l) || echo $(cat /proc/cpuinfo | grep processor | wc -l) 
+}
+
+_k_hwi_cpu_hz() {
+    CPU_HZ=( $(cat /proc/cpuinfo | grep "cpu MHz" | tail -n 1) )
+    echo ${CPU_HZ[3]}MHz
+}
+
+_k_hwi_cpu_cores() {
+    CPU_CORE=( $(cat /proc/cpuinfo | grep "cpu cores" | tail -n 1) )
+    CPU_TCORE=$( [ -d /sys/class/cpuid ] && echo $(ls /sys/class/cpuid | wc -l) || echo $(cat /proc/cpuinfo | grep processor | wc -l) )
+    echo "${CPU_CORE[3]} cores x $(($CPU_TCORE / ${CPU_CORE[3]})) ea"
+}
+
+_k_hwi_mem_size() {
+    echo $(printf "%3.1f" $( echo "$(cat /proc/meminfo | grep MemTotal | sed -e s/MemTotal:// -e s/kB//)/(1024*1024)" | bc -l) )G
+}
+
+_k_hwi_eth_num() {
+   echo $(ls -d /sys/class/net/eth[0-9]* | wc -l)
+}
+
+_k_hwi_hdd_num() {
+   #echo $([ -d /proc/scsi/sg ] && (cat /proc/scsi/sg/device_strs| grep -v DVDRAM | grep -v CDROM | grep -v Virtual | wc -l)|| echo 0)
+   echo $([ -f /proc/diskstats ] && (cat /proc/diskstats | grep -w "[h|s]d[a-z]" | wc -l) || echo 0)
+}
+
+_k_hwi_hdd_list() {
+   [ -d /sys/class/scsi_disk ] && ls /sys/class/scsi_disk || return 1
+}
+
+_k_hwi_hdd_dev() {
+   local hd_l HDD_DEV
+   hd_l=$1
+   cd /sys/class/scsi_disk/${hd_l}/device/
+   HDD_DEV=/dev/$([ -d block ] && (ls block/) ||  (ls -d block\:s* | sed -e 's/block://g'))
+   echo $HDD_DEV
+}
+
+_k_hwi_hdd_sn() {
+   local hd_l HDD_DEV HDD_SN
+   hd_l=$1
+   HDD_DEV=$(_k_hwi_hdd_dev $hd_l)
+   HDD_SN=( $(smartctl -a -d ata ${HDD_DEV} | grep "Serial Number:") )
+   echo ${HDD_SN[2]}
+}
+
+_k_hwi_hdd_fw() {
+   local hd_l HDD_DEV HDD_FM
+   hd_l=$1
+   HDD_DEV=$(_k_hwi_hdd_dev $hd_l)
+   HDD_FM=( $(smartctl -a -d ata ${HDD_DEV} | grep "Firmware Version:") )
+   echo ${HDD_FM[2]}
+}
+
+_k_hwi_hdd_model() {
+   local hd_l HDD_DEV HDD_FM
+   hd_l=$1
+   echo $(cat /sys/class/scsi_disk/${hd_l}/device/model)/$(cat /sys/class/scsi_disk/${hd_l}/device/vendor)
+}
+
+_k_hwi_bmc_fw() {
+   echo $( [ -f /sys/class/ipmi/ipmi0/device/bmc/firmware_revision ] && (cat /sys/class/ipmi/ipmi0/device/bmc/firmware_revision) || echo "-")
+}
+
+_k_hwi_bmc_ver() {
+   echo $( [ -f /sys/class/ipmi/ipmi0/device/bmc/ipmi_version ] && (cat /sys/class/ipmi/ipmi0/device/bmc/ipmi_version) || echo "-")
+}
+
+_k_hwi_bios_ver() {
+   BIOS_V=( $(dmidecode -s bios-version) )
+   printf " %9s" ${BIOS_V[0]} 
+}
+
+_k_hwi_hca_num() {
+   [ -d /sys/class/infiniband ] && ls /sys/class/infiniband | wc -l || echo 0
+}
+
+_k_hwi_hca_list() {
+   [ -d /sys/class/infiniband ] && ls /sys/class/infiniband || return 1
+}
+
+_k_hwi_hca_ports() {
+   local ibn
+   ibn=$1
+   [ -d /sys/class/infiniband/$ibn/ports ] && ls /sys/class/infiniband/$ibn/ports|wc -l
+}
+
+_k_hwi_hca_fw() {
+   local ibn
+   ibn=$1
+   echo $([ -f /sys/class/infiniband/$ibn/fw_ver ] && (cat /sys/class/infiniband/$ibn/fw_ver) || echo "-" )
+}
+
+_k_hwi_hca_rate() {
+   local ibn
+   ibn=$1
+   echo $([ -f /sys/class/infiniband/$ibn/ports/1/rate ] && (PGB=( $(cat /sys/class/infiniband/$ibn/ports/1/rate) ); echo "${PGB[0]}Gbps ${PGB[3]}" ) || echo "-" ) 
+}
+
+_k_hwi_hca_state() {
+   local hca hca_port
+   hca=$1
+   hca_port=$2
+   if [ -f /sys/class/infiniband/${hca}/ports/${hca_port}/state ]; then
+     ACT=( $(cat /sys/class/infiniband/${hca}/ports/${hca_port}/state) )
+     printf "%s" $(echo ${ACT[1]}|cut -c1)
+   fi
+}
+
+_k_hwi_hca_info() {
+   local hca
+   hca=$1
+   echo -n "F:$(cat /sys/class/infiniband/${hca}/fw_ver) " 
+
+   for hca_port in $(ls /sys/class/infiniband/$hca/ports/); do
+       ACT=( $(cat /sys/class/infiniband/${hca}/ports/${hca_port}/state) )
+       SPD=( $(cat /sys/class/infiniband/${hca}/ports/${hca_port}/rate) )
+       printf " %1d:%s" "${hca_port}" "$(echo ${ACT[1]}|cut -c1)"
+       printf ":%s" "${SPD[0]}"
+   done
+}

@@ -1,0 +1,907 @@
+
+#Kage Library  - ace
+#$lib_ver$:0.0.136
+_k_loaded_ace(){
+   local null
+}
+
+_k_ace(){
+   [ -n "$_K_HOME" ] || error_return "_K_HOME not found" || return 1
+   [ -d /acefs/clusters ] && export _K_ACE_FS=/acefs
+   [ -d /opt/ace/bin ] && export _K_ACE_BIN=/opt/ace/bin
+   [ -d /ha_cluster/storage ] && export _K_ACE_STORAGE_DIR="" 
+   [ -d /acefs/clusters -a -d /opt/ace/bin ] && export _K_ACE_WORK=1
+   #start code here
+   for rl in cmd misc lib; do
+        _k_list_lib  $rl || echo "requirement library is $rl"
+   done
+}
+
+_k_ace_close(){
+   unset ace _K_ACE_FS _K_ACE_BIN _K_ACE_WORK _K_ACE_STORAGE_DIR
+}
+
+_k_ace_help() {
+   local ace_bin
+   echo "Enhanced ACE Function library and Simulator"
+   ace_bin=$(which ace 2>/dev/null)
+   [ -n "$ace_bin" ] && echo "$($ace_bin help 2>&1)"
+}
+
+_k_ace_check() {
+   local help="Check ACE running"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    if [ -d /acefs/clusters -a -d /acefs/global/commands ]; then
+        if ps -ef |grep "aced --update" | grep -v grep >/dev/null ; then
+           echo process running
+           return 0 
+        else
+           echo process down
+        fi
+    else
+        echo "ACE not ready"
+    fi   
+    return 1
+}
+
+_k_ace_hostname2clustername() {
+    local hostname_dash hostname_id_length hostname clustername_arr
+    hostname=$1
+    hostname_dash=$(cat /acefs/global/hostname_dash)
+    if [ "$hostname_dash" == "1" ]; then
+        clustername_arr=($(echo $hostname | sed "s/-/ /g"))
+        clustername_arr[${#clustername_arr[*]}-1]=""
+        echo ${clustername_arr[*]} | sed "s/ /-/g"
+    else
+        hostname_id_length=$(cat /acefs/global/hostname_id_length)
+        echo $hostname | cut -c -$((${#hostname}-$hostname_id_length))
+    fi
+}
+
+_k_ace_cluster_rev() {
+   local help="Show Revisions of Clusters"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   local cluster
+   cluster=$1
+   _k_ace_db ls clusters/$cluster || error_return $cluster not found || return 1
+   _k_ace_db cat  clusters/$cluster/revision
+}
+
+_k_ace_server_rev() {
+   local help="Show Revisions of Servers"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   local server
+   server=$1
+   _k_ace_db ls servers/$server || error_return $server not found || return 1
+   _k_ace_db cat servers/$server/host/revision
+}
+
+_k_ace_cluster_gnbd_name() {
+   local help="Get GNBD name of Cluster"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    local storage_dir cluster cluster_dir revision
+    cluster=$1
+    cluster_dir=$(_k_ace_db path clusters/$cluster) || error_return "$cluster not found" || return 1
+    revision=$2
+    [ -n "$revision" ] || revision=$(_k_ace_cluster_rev $cluster)
+    if [ ! -d $cluster_dir -o ! -d $cluster_dir/revisions/$revision ]; then
+         echo "$cluster or r$revision not found"
+         return 1
+    fi
+    storage_dir=$_K_ACE_STORAGE_DIR$(_k_ace_db cat global/storage_dir)
+    checkout=$(cat $cluster_dir/revisions/$revision/checkout)
+    [ -f $cluster_dir/revisions/$revision/oneup ] && oneup=$(cat $cluster_dir/revisions/$revision/oneup)
+    [ -n "$oneup" ] && gnbd_name=${cluster}.${revision}.${oneup} || gnbd_name=${cluster}.${revision}
+    [ "$checkout" == "1" ] && gnbd_name=${gnbd_name}.co
+    echo $gnbd_name
+}
+
+_k_ace_load_cluster_file() {
+   local help="Load root filesystem device of the Cluster"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    local storage_dir cluster cluster_dir revision
+    cluster=$1
+    cluster_dir=$(_k_ace_db path clusters/$cluster) || error_return "$cluster not found" || return 1
+    revision=$2
+    [  -n "$cluster" ] || error_return "_k_ace_load_cluster_file <cluster> [<revision>]" || return 1
+    [ -n "$revision" ] || revision=$(_k_ace_cluster_rev $cluster)
+
+    if [ ! -d $cluster_dir -o ! -d $cluster_dir/revisions/$revision ]; then
+         echo "$cluster or r$revision not found"
+         return 1
+    fi
+    storage_dir=$_K_ACE_STORAGE_DIR$(_k_ace_db cat global/storage_dir)
+
+    gnbd_name=$(_k_ace_cluster_gnbd_name $cluster $revision)
+    base_file=$storage_dir/$(cat $cluster_dir/install)
+    cow_file=$storage_dir/$gnbd_name
+    cow_device=$(_k_lexec dev _k_dev_load_device "loop" $base_file $cow_file)
+    echo $cow_device
+}
+
+_k_ace_unload_cluster_file() {
+   local help="Unload root filesystem device of the cluster"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    local storage_dir cluster cluster_dir revision
+    cluster=$1
+    if echo $cluster | grep "^/dev/" >/dev/null; then
+        [ -L $cluster ] || error_return "$cluster not found"
+        grep "^$cluster" /proc/mounts >/dev/null && error_return "using $cluster device" || return 1
+        _k_lexec dev _k_dev_dm_close $cluster
+    else
+        cluster_dir=$(_k_ace_db path clusters/$cluster) || error_return "$cluster not found" || return 1
+        revision=$2
+        [  -n "$cluster" ] || error_return "_k_ace_load_cluster_file <cluster> [<revision>]" || return 1
+        [ -n "$revision" ] || revision=$(_k_ace_cluster_rev $cluster)
+
+        if [ ! -d $cluster_dir -o ! -d $cluster_dir/revisions/$revision ]; then
+             echo "$cluster or r$revision not found"
+             return 1
+        fi
+        storage_dir=$_K_ACE_STORAGE_DIR$(_k_ace_db cat global/storage_dir)
+        gnbd_name=$(_k_lexec dev _k_ace_cluster_gnbd_name $cluster $revision)
+        base_file=$storage_dir/$(cat $cluster_dir/install)
+        cow_file=$storage_dir/$gnbd_name
+
+        cow_device=$(_k_lexec dev _k_dev_dm_find $cow_file) || return 1
+        if grep "^$cow_device" /proc/mounts >/dev/null; then
+             error_return "using $cow_device device" || return 1
+        fi
+        echo "unload $cow_device"
+        _k_lexec dev _k_dev_dm_close $cow_device
+    fi
+    return 0
+}
+
+_k_ace_find_cluster_dev() {
+   local help="Find root filesystem device of the cluster"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    local storage_dir cluster cluster_dir revision
+    cluster=$1
+    cluster_dir=$(_k_ace_db path clusters/$cluster) || error_return "$cluster not found" || return 1
+    revision=$2
+    [  -n "$cluster" ] || error_return "_k_ace_load_cluster_file <cluster> [<revision>]" || return 1
+    [ -n "$revision" ] || revision=$(_k_ace_cluster_rev $cluster)
+
+    if [ ! -d $cluster_dir -o ! -d $cluster_dir/revisions/$revision ]; then
+         echo "$cluster or r$revision not found"
+         return 1
+    fi
+    storage_dir=$_K_ACE_STORAGE_DIR$(_k_ace_db cat global/storage_dir)
+    gnbd_name=$(_k_lexec dev _k_ace_cluster_gnbd_name $cluster $revision)
+    base_file=$storage_dir/$(cat $cluster_dir/install)
+    cow_file=$storage_dir/$gnbd_name
+
+    cow_device=$(_k_lexec dev _k_dev_dm_find $cow_file) || return 1
+    echo $cow_device
+}
+
+_k_ace_server_mac() {
+   local help="Get Ethernet MAC address of the server"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   local server
+   server=$1
+   _k_ace_db ls servers/$server || error_return $server not found || return 1
+   _k_ace_db cat servers/$server/mac1
+}
+
+_k_ace_get_dhcp_ip() {
+   local help="Get DHCP IP of the server"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   local server
+   server=$1
+   server_mac=$(_k_ace_server_mac $server) || error_return "$server not found" || return 1
+   _k_lexec2 _k_dhcp_get_ip $server_mac
+}
+
+_k_ace_update() {
+   local help="update cluster boot modules
+Usage) ${FUNCNAME} <cluster name>
+  - update boot kernel module and show log
+
+Usage) ${FUNCNAME} <server name>
+  - update boot kernel module and reset the server
+"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    local input cluster chk
+    chk=0
+    input=$1
+    if [ -d /acefs/clusters/$input ]; then
+        ace update $input 
+        tail -f /tmp/cluster_update_$inpute.out
+    elif [ -d /acefs/servers/$input ]; then
+        cluster=$(cat /acefs/servers/$input/cluster_name) 
+        ace update $cluster 
+        for (( ii=0; ii<300;ii++)); do
+            echo "Waiting until completed update $cluster....."
+            tail -n 5 /tmp/cluster_update_${cluster}.out | grep "^+ exit 0" >/dev/null && chk=$(($chk+1))
+            (( $chk>=2)) && break
+            sleep 2
+        done
+        ace reset $input
+    else
+        echo "Unknown input($input)"
+        return 1
+    fi
+    return 0   
+}
+
+
+#include misc
+_k_ace_active_state_v1() {
+    local input nodes chk sec nodes_arr total
+    nodes=$1
+    nodes_arr=($(_k_misc_braket $nodes))
+    total=${#nodes_arr[*]}
+    chk=0
+    for  (( ii=0; ii<${#nodes_arr[*]}; ii++)); do
+        node=${nodes_arr[$ii]}
+        [ -n "$node" ] || continue
+        cluster=$(echo $node | cut -c -$((${#node} - $(( $(cat /acefs/global/hostname_id_length) +1 )) )) )
+        if [ "$([ -f /acefs/clusters/$cluster/hosts/$node/server/state ] && cat /acefs/clusters/$cluster/hosts/$node/server/state)" == "13" ]; then
+           chk=$(($chk+1))
+           nodes_arr[$ii]=""
+        fi
+        (( $total <= $chk ))  && return 0
+    done
+    return 1
+}
+
+_k_ace_active_state() {
+   local help="Get state of the nodes"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    local input nodes chk sec nodes_arr total
+    nodes=$1
+    nodes_arr=($(_k_misc_braket $nodes))
+    total=${#nodes_arr[*]}
+    chk=0
+    for  (( ii=0; ii<${#nodes_arr[*]}; ii++)); do
+        node=${nodes_arr[$ii]}
+        [ -n "$node" ] || continue
+        if echo "$node" | grep "^server-" >/dev/null ; then
+            state_file=servers/$node/state
+        else
+            cluster=$(echo $node | cut -c -$((${#node} - $(( $(_k_ace_db cat global/hostname_id_length) +1 )) )) )
+            state_file=clusters/$cluster/hosts/$node/server/state
+        fi
+        if [ "$(_k_ace_db cat $state_file)" == "13" ]; then
+           chk=$(($chk+1))
+           nodes_arr[$ii]=""
+        fi
+        (( $total <= $chk ))  && return 0
+    done
+    return 1
+}
+
+_k_ace_cmd() {
+   local help="Run a command to nodes of active state
+
+Usage)
+${FUNCNAME} \"<node1> <node2> [...]\" <command> [<command's option>]
+"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    local input nodes chk sec nodes_arr total 
+    nodes=$1
+    shift 1
+    input=$*
+    nodes_arr=($(_k_misc_braket $nodes))
+    total=${#nodes_arr[*]}
+    chk=0
+    sec=0
+    while (( $total > $chk )); do
+      _k_ace_active_state $nodes && break
+      echo "wait until active state to all $nodes (active node $chk/$total) ($(($sec*2))sec)"
+      if (( $sec > 300 )); then
+          error_return "too long wait (10min.) but not all active state, please check node"
+          return 1
+      fi
+      sec=$(($sec+1))
+      sleep 2
+    done
+    pdsh -R ssh -w $nodes "$input"  | sort
+    return 0
+}
+
+_k_ace_db() {
+   local help="Manage ACE DB
+
+${FUNCNAME} path : Show path
+${FUNCNAME} cat/get <database object>: Get data
+${FUNCNAME} <other linux command> <database object>: run linux command 
+if not found object then return 1 with \"-\" value "
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    local acefs ace_path cmd
+    cmd=$1
+    ace_path=$(echo $2 | grep "^/acefs/" > /dev/null && echo $2 | sed "s#/acefs/##g" || echo $2)
+    acefs=$3
+    [ -n "$acefs" ] || acefs=$_K_ACE_FS
+    [ -n "$acefs" ] || error_return "acefs path not found" || return 1
+    [ -d $acefs ] || error_return "$acefs path not found" || return 1
+    if [ "$cmd" == "path" ]; then
+        [ -f $acefs/$ace_path -o -d $acefs/$ace_path ] && echo $acefs/$ace_path || error_return "-" || return 1
+    elif [ "$cmd" == "cat" -o "$cmd" == "get" ]; then
+        [ -f $acefs/$ace_path ] && cat $acefs/$ace_path || error_return "-" || return 1
+    else
+        [ -d $acefs/$ace_path -o -f $acefs/$ace_path ] && $cmd $acefs/$ace_path || error_return "-" || return 1
+    fi
+}
+
+_k_ace_state() {
+   local ace_state  state
+   ace_state[13]=active
+   ace_state[7]=-
+
+   state=$1
+   echo ${ace_state[$state]}
+}
+
+_k_ace_rev_state() {
+   local ace_state  state
+   ace_state[1]=init
+   ace_state[4]=active
+
+   state=$1
+   echo ${ace_state[$state]}
+}
+
+_k_ace_real() {
+   local help="Run real ACE command"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    if [ "$_K_ACE_WORK" == "1" ]; then
+        /opt/ace/bin/ace $*
+        return 0
+    fi
+    return 1
+}
+
+_k_ace_servers() {
+   local help="show server list"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    _k_ace_real $(echo ${FUNCNAME} | sed "s/_k_ace_//g") $* && return 0
+
+    echo "SIM)"
+printf "%11s " "Name"
+printf "%12s " "Type"
+printf "%2s " "X"
+printf "%2s " "Y"
+printf "%2s " "Z"
+printf "%2s " "N"
+printf "%3s " "Grp"
+printf "%4s " "Rack"
+printf "%4s " "Slot"
+printf "%5s " "Blade"
+printf "%12s " "Host"
+printf "%4s " "Net1"
+printf "%4s " "Net2"
+printf "%6s " "State"
+echo
+
+for server in $(_k_ace_db ls servers); do
+    host_name=$(_k_ace_db cat servers/$server/host/name)
+    rack=$(_k_ace_db cat servers/$server/rack)
+    type=$(_k_ace_db cat servers/$server/type)
+    X=$(_k_ace_db cat servers/$server/x)
+    Y=$(_k_ace_db cat servers/$server/y)
+    Z=$(_k_ace_db cat servers/$server/z)
+    N=$(_k_ace_db cat servers/$server/group_ndx)
+    Grp=$(_k_ace_db cat servers/$server/group_id)
+    Rack=$(_k_ace_db cat servers/$server/rack)
+    Blade=$(_k_ace_db  cat servers/$server/blade)
+    Net1=$( [ "$(_k_ace_db cat servers/$server/net1)" == "1" ] && echo up || echo down)
+    Net2=$( [ "$(_k_ace_db cat servers/$server/net2)" == "1" ] && echo up || echo down)
+    State=$(_k_ace_state $(_k_ace_db cat servers/$server/state))
+    Slot=$(_k_ace_db cat servers/$server/slot)
+
+    printf "%11s " "$server"
+    printf "%12s " "$type"
+    printf "%2s " "$X"
+    printf "%2s " "$Y"
+    printf "%2s " "$Z"
+    printf "%2s " "$N"
+    printf "%3s " "$Grp"
+    printf "%4s " "$Rack"
+    printf "%4s " "$Slot"
+    printf "%5s " "$Blade"
+    printf "%12s " "$host_name"
+    printf "%4s " "$Net1"
+    printf "%4s " "$Net2"
+    printf "%6s " "$State"
+    echo
+done
+}
+
+_k_ace_clusters() {
+   local help="show cluster list"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    _k_ace_real $(echo ${FUNCNAME} | sed "s/_k_ace_//g") $* && return 0
+    echo "SIM)"
+    printf "%10s " Name 
+    printf "%20s " Description 
+    printf "%20s " Kernel 
+    printf "%15s " IP1 
+    printf "%15s " IP2 
+    printf "%15s " IP3
+    printf "%15s " IP4
+    printf "%3s " Rev             
+    printf "%4s " Revs
+    printf "%5s " Hosts
+    printf "%5s " State
+    echo 
+    
+    for cluster in $(_k_ace_db ls clusters); do
+    Name=$(_k_ace_db cat clusters/$cluster/name)
+    Description=$(_k_ace_db cat clusters/$cluster/desc)
+    Kernel=$(_k_ace_db cat clusters/$cluster/kernel)
+    IP1=$(_k_ace_db cat clusters/$cluster/ip1)
+    IP2=$(_k_ace_db cat clusters/$cluster/ip2)
+    IP3=$(_k_ace_db cat clusters/$cluster/ip3)
+    IP4=$(_k_ace_db cat clusters/$cluster/ip4)
+    Rev=$(_k_ace_db cat clusters/$cluster/revision)
+    Hosts=$(_k_ace_db ls clusters/$cluster/hosts | wc -l)
+    State=$(_k_ace_db cat clusters/$cluster/state)
+    printf "%10s " "$Name"
+    printf "%20s " "$Description"
+    printf "%20s " "$Kernel"
+    printf "%15s " "$IP1"
+    printf "%15s " "$IP2"
+    printf "%15s " "$IP3"
+    printf "%15s " "$IP4"
+    printf "%3s " "$Rev"
+    printf "%4s " "$Revs"
+    printf "%5s " "$Hosts"
+    printf "%5s " "$State"
+    echo 
+    done
+}
+
+_k_ace_revisions() {
+   local help="show revision list"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    _k_ace_real $(echo ${FUNCNAME} | sed "s/_k_ace_//g") $* && return 0
+    echo "SIM)"
+    printf "%12s " Name
+    printf "%8s " Revision
+    printf "%25s " Description
+    printf "%25s " Kernel
+    printf "%7s " State
+    printf "%8s " Checkout
+    printf "%15s " Host
+    printf "%11s " Server
+    printf "%s " Date
+    echo
+
+    for cluster in $(_k_ace_db ls clusters); do
+    for rev in $(_k_ace_db ls clusters/$cluster/revisions); do
+    Name=$(_k_ace_db cat clusters/$cluster/name)
+    Description=$(_k_ace_db cat clusters/$cluster/revisions/$rev/desc)
+    Kernel=$(_k_ace_db cat clusters/$cluster/revisions/$rev/kernel)
+    Hosts=$(_k_ace_db ls clusters/$cluster/hosts | wc -l)
+    State=$(_k_ace_rev_state $(_k_ace_db cat clusters/$cluster/revisions/$rev/state))
+    Checkout=$([ "$(_k_ace_db cat clusters/$cluster/revisions/$rev/checkout)" == "1" ] && echo yes || echo no)
+    Host=$([ "$Checkout" == "yes" ] &&  echo ${cluster}-r$(printf "%03d" $rev) || echo -)
+    Server=$([ "$Checkout" == "yes" ] &&  _k_ace_db cat clusters/$cluster/hosts/$Host/server/name || echo -)
+    Date=$(_k_ace_db cat clusters/$cluster/revisions/$rev/date)
+    printf "%12s " "$Name"
+    printf "%8s " "$rev"
+    printf "%25s " "$Description"
+    printf "%25s " "$Kernel"
+    printf "%7s " "$State"
+    printf "%8s " "$Checkout"
+    printf "%15s " "$Host"
+    printf "%11s " "$Server"
+    printf "%s " "$Date"
+    echo
+    done
+    done
+}
+
+ace() {
+   local help="ace command wrapper"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   local cmd
+   cmd=$1
+   if _k_list _k_ace_$cmd >/dev/null; then
+        shift 1
+        _k_ace_$cmd $* 
+   else
+        [ -f /opt/ace/bin/ace ] && /opt/ace/bin/ace $* || error_return "ACE not found" || return 1
+   fi
+}
+
+_k_ace_clone() {
+    _k_ace_real $(echo ${FUNCNAME} | sed "s/_k_ace_//g") $* && return 0
+    echo "SIM)"
+    echo "comming soon"
+}
+
+_k_ace_checkin() {
+    _k_ace_real $(echo ${FUNCNAME} | sed "s/_k_ace_//g") $* && return 0
+    echo "SIM)"
+    echo "comming soon"
+}
+
+_k_ace_checkout() {
+    _k_ace_real $(echo ${FUNCNAME} | sed "s/_k_ace_//g") $* && return 0
+    echo "SIM)"
+    echo "comming soon"
+}
+
+_k_ace_export_image() {
+    _k_ace_real $(echo ${FUNCNAME} | sed "s/_k_ace_//g") $* && return 0
+    echo "SIM)"
+    echo "comming soon"
+}
+
+_k_ace_import_image() {
+    _k_ace_real $(echo ${FUNCNAME} | sed "s/_k_ace_//g") $* && return 0
+    echo "SIM)"
+    echo "comming soon"
+}
+
+_k_ace_ssh() {
+#    _k_ace_real $(echo ${FUNCNAME} | sed "s/_k_ace_//g") $* && return 0
+    echo "SIM)"
+    echo "comming soon"
+}
+
+_k_ace_update() {
+    _k_ace_real $(echo ${FUNCNAME} | sed "s/_k_ace_//g") $* && return 0
+    echo "SIM)"
+    echo "comming soon"
+}
+
+_k_ace_active() {
+    _k_ace_real $(echo ${FUNCNAME} | sed "s/_k_ace_//g") $* && return 0
+    echo "SIM)"
+    echo "comming soon"
+}
+
+#_k_ace_off() {
+#}
+
+#include cmd
+_k_ace_uninstall() {
+   local help="ACE Uninstaller"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    local del_daemons del_ha_daemons stop_daemons killdaemons modules umounts configs del_users del_group recover_files standalone_ms
+    echo "SIM)"
+    echo "Do not delete compiled package's files"
+    sleep 5
+    del_daemons="ace opensm1d opensm2d sge_qmaster ace_global ace_home"
+    del_ha_daemons="heartbeat drbd"
+    stop_daemons="dhcpd rpcbind rpcidmapd nfslock nfs"
+    recover_daemons="rpcbind rpcidmapd nfslock"
+    #killdaemons="aced nfsd dhcpd sge_qmaster ace_sged ace_syncd ace_ibstatd drbd heartbeat "
+    killdaemons="$stop_daemons aced dhcpd sge_qmaster ace_sged ace_syncd ace_ibstatd drbd heartbeat "
+    modules="gnbd mlx4_en cowloop"
+    umounts="/global /home /ha_cluster"
+
+    configs="/etc/dhcpd.conf /etc/ssh/ssh_known_hosts /root/.ssh /etc/sysconfig/network-scripts/ifcfg-eth3 /etc/sysconfig/network-scripts/ifcfg-eth2 /etc/sysconfig/network-scripts/ifcfg-ib0 /etc/sysconfig/network-scripts/ifcfg-ib1 /etc/init.d/sge_qmaster /etc/profile.d/sge.sh /var/lib/heartbeat /var/lib/drbd /lib/modules/$(uname -r)/extra/gnbd/gnbd.ko /lib/modules/$(uname -r)/updates/drbd.ko /etc/sysconfig/network-scripts/ifcfg-eth2 /etc/sysconfig/network-scripts/ifcfg-eth3 /etc/sysconfig/network-scripts/ifcfg-ib0 /etc/sysconfig/network-scripts/ifcfg-ib1 /etc/tftp.remap /KNC_gold_update_2-2.1.5889-16-rhel-6.2.tar-JNBXJZf /etc/drbd.d /etc/drbd.conf /var/lib/drbd /etc/ha.d /var/lib/heartbeat /var/run/heartbeat /usr/lib64/heartbeat /usr/share/doc/heartbeat /usr/lib/ocf"
+    remove_ace_dir="/acefs /cluster  /global /root/post-install.log /root/ace_install.log /ha_cluster /var/lib/ace"
+
+    del_users="hacluster sgeadmin appro micuser tftp"
+    del_group="haclient"
+    recover_files="/etc /sbin /bin /usr/bin /usr/sbin /usr/lib"
+
+    if ! standalone_ms=$(_k_ace_db cat /global/standalone_ms); then
+          _k_ask "I can't found ACE. Is this HA (y/[n]) ? "  && standalone_ms=0 || standalone_ms=1
+    fi
+    [ -f /opt/ace/etc/database.cfg ] && cp /opt/ace/etc/database.cfg /root/database.cfg.ace-backup
+
+    if [ -d /acefs/servers ]; then
+        echo "ACE is running... So, shutdown nodes of ACE"
+        for svr in $(ls /acefs/servers 2>/dev/null | grep -v -e server-0001 -e server-0002); do
+          _k_ace_active_state $svr && ace poweroff $svr
+        done
+    else
+        echo "ACE not ready"
+    fi
+    
+    echo "Remove ACE Daemons"
+    for dn in $del_daemons; do
+       if [ -f /etc/init.d/$dn ]; then
+           echo "  > Stop $dn daemon"
+           /etc/init.d/$dn stop 2>/dev/null
+           echo "  > Del $dn daemon starter"
+           chkconfig --del $dn
+           rm -f /etc/init.d/$dn
+           rm -f /etc/init.d/${dn}.ace*
+       fi
+    done
+
+    echo Stop daemon and recover from ha_cluster to origial
+    for sn in $stop_daemons; do
+       if [ -f /etc/init.d/$sn ]; then
+             echo " > $sn stop"
+             /etc/init.d/$sn stop
+             chkconfig --level 12345 $sn off
+             [ -f /etc/init.d/${sn}.ace~ ] && mv /etc/init.d/${sn}.ace~ /etc/init.d/${sn}
+       fi
+
+       if [ "$sn" == "nfs" -o "$sn" == "nfsserver" -o "$sn" == "nfsd" ]; then
+            if _k_cmd_check_mounted /var/lib/nfs/rpc_pipefs; then
+                 echo "Force umount /var/lib/nfs/rpc_pipefs"
+                 _k_cmd_umount /var/lib/nfs/rpc_pipefs 2>/dev/null
+            fi
+            [ -L /var/lib/nfs ] && rm -f /var/lib/nfs 
+            if [ -d /var/lib/nfs.local ]; then
+                 mv /var/lib/nfs.local /var/lib/nfs
+            elif [ -d /ha_cluster/var/lib/nfs ]; then
+                 cp -a /ha_cluster/var/lib/nfs /var/lib/nfs
+            fi
+       elif [ "$sn" == "dhcpd" ]; then
+            [ -L /etc/dhcpd.conf ] && rm -f /etc/dhcpd.conf
+            if [ -f /etc/dhcpd.conf.ace_save ]; then
+                 mv /etc/dhcpd.conf.ace_save /etc/dhcpd.conf
+            elif [ -L /etc/dhcpd.conf.ace_save ]; then
+                 rm -f /etc/dhcpd.conf.ace_save
+            fi
+            [ -L /var/lib/dhcpd ] && rm -f /var/lib/dhcpd 
+            if [ -d /var/lib/dhcpd.local ]; then
+                 mv /var/lib/dhcpd.local /var/lib/dhcpd
+            elif [ -d /ha_cluster/var/lib/dhcpd ]; then
+                 cp -a /ha_cluster/var/lib/dhcpd /var/lib/dhcpd
+            fi
+       fi
+
+    done
+
+    echo "Kill daemons"
+    for kdn in $killdaemons; do
+       ps -ef |grep $kdn |grep -v grep >/dev/null && killall -9 $kdn
+    done
+    pid=$(ps -ef |grep heartbeat | grep -v grep | awk '{print $2}')
+    [ -n "$pid" ] && kill -9 $pid
+    
+    echo "Remove kernel modules"
+    for mn in $modules; do
+        lsmod |grep $mn >/dev/null && modprobe -r $mn
+    done
+
+    if which ofed_uninstall.sh > /dev/null 2>&1; then
+        ofed_uninstall.sh 
+    else
+        echo "Not found OFED"
+    fi
+
+    [ "$standalone_ms" == "0" ] && ha_dev=/dev/drbd0 || ha_dev=/dev/sdb
+    echo "try again umount /var/lib/nfs/rpc_pipefs"
+    _k_cmd_umount /var/lib/nfs/rpc_pipefs
+    _k_cmd_umount /ha_cluster/tftpboot/ace/pxelinux.cfg
+    _k_cmd_umount /ha_cluster/var/lib/nfs/rpc_pipefs
+    for um in $umounts ; do
+         for ((ii=0;ii<5;ii++)); do
+             if _k_cmd_check_mounted $um $ha_dev; then
+                 echo "Unmount $um on $ha_dev (try $ii)"
+                 _k_cmd_umount $um $ha_dev 
+                 sleep 2
+             else
+                 echo "Not mounted $um on $ha_dev"
+                 break
+             fi
+         done
+    done
+    _k_cmd_kill_mount $ha_dev
+    for um in $umounts ; do
+         echo "Check again $um on $ha_dev"
+         for ((ii=0;ii<5;ii++)); do
+             if _k_cmd_check_mounted $um $ha_dev; then
+                 echo "Unmount $um on $ha_dev (try $ii)"
+                 _k_cmd_umount $um $ha_dev
+                 sleep 2
+             else
+                 echo "Not mounted $um on $ha_dev"
+                 break
+             fi
+         done
+    done
+
+    if [ "$standalone_ms" == "0" ]; then
+        for dha in $del_ha_daemons; do
+            if [ -f /etc/init.d/$dha ]; then
+                /etc/init.d/$dha stop
+                chkconfig --del $dha
+                rm -f /etc/init.d/$dha
+            fi
+        done
+    fi
+    _k_cmd_umount /ha_cluster
+
+    echo "Remove ACE Ethernet"
+    for eth in $(ifconfig  | grep -e "^eth" -e "^ib" | awk '{print $1;}'); do
+         if [ "$eth" != "eth0" -a "$eth" != "eth1" ]; then
+              ifconfig $eth down
+         fi
+    done
+    for eth in $(ifconfig  | grep -e "^eth" -e "^ib" | awk '{print $1;}'); do
+         if [ "$eth" != "eth0" -a "$eth" != "eth1" ]; then
+              ifconfig $eth down
+         fi
+    done
+    ip addr | grep secondary | while read line; do
+        addr_line=($line)
+        ip addr del ${addr_line[1]} dev $(echo ${addr_line[$((${#addr_line[*]}-1))]} | awk -F: '{print $1}')
+    done
+    ip addr | grep inet | grep global | while read line; do
+        addr_line=($line)
+        [ "${addr_line[$((${#addr_line[*]}-1))]}" != "eth0" -a "${addr_line[$((${#addr_line[*]}-1))]}" != "eth1" ] && ip addr del ${addr_line[1]} dev ${addr_line[$((${#addr_line[*]}-1))]}
+    done
+    #inet 10.12.0.1/16 brd 10.12.255.255 scope global ib0
+    #ip addr del 10.4.0.3/16 dev eth0
+
+    echo "Delete configuration"
+    for cn in $configs $remove_ace_dir; do
+        [ -f $cn ] &&  rm -f $cn
+        [ -L $cn ] &&  rm -f $cn
+        if [ "$cn" == "/home" ]; then
+            _k_ask "Please check /home for NFS mount or not, anykey to continue..."
+            continue
+        elif [ "$cn" == "/global" ]; then
+            if _k_ask "Can I delete /global directory ? (y/[n]) Please check /global for NFS mount or not"; then
+                [ -d $cn ] &&  rmdir $cn
+            fi
+        else
+            [ -d $cn ] &&  rm -fr $cn
+        fi
+    done
+
+    echo "Recover $recover_files directory"
+    for re in $(find $recover_files -name "*.ace"); do
+          mv $re $(echo $re | sed "s/\.ace$//g")
+    done
+    for re in $(find $recover_files -name "*.orig"); do
+          mv $re $(echo $re | sed "s/\.orig$//g")
+    done
+
+    echo "Clean ACE temp file"
+    for re in $(find /etc -name "*.ace~"); do
+#          mv $re $(echo $re | sed "s/\.ace~$//g")
+          rm -f $re
+    done
+
+
+    sed -e "s/STATD_HOSTNAME=$(hostname | cut -c -$(( $(hostname | wc -m) - 2)))/STATD_HOSTNAME=localhost.localdomain/g" < /etc/sysconfig/network  >/etc/sysconfig/network~
+    mv /etc/sysconfig/network~ /etc/sysconfig/network
+    echo "127.0.0.1       localhost.localdomain localhost
+::1         localhost.localdomain localhost6 localhost6.localdomain6 localhost
+     " > /etc/hosts
+    hostname localhost
+
+    echo "Delete ACE users"
+    for du in $del_users; do
+          id $du >/dev/null 2>&1 && userdel -f -r $du
+    done
+    for dg in $del_groups; do
+          grep "^$dg" /etc/group >/dev/null 2>&1 && groupdel $dg
+    done
+ 
+    echo "Remove NFS export configuration"
+    echo "" > /etc/exports
+    if [ -f /etc/modprobe.conf ]; then
+        grep -v mlx4_en /etc/modprobe.conf > /etc/modprobe.conf~
+        grep -v ib_ipoib /etc/modprobe.conf~ > /etc/modprobe.conf
+    fi
+
+    [ -d /opt/ace.del ] && rm -fr /opt/ace.del
+    if [ -d /opt/ace ]; then
+        mv /opt/ace /opt/ace.del
+    elif [ -L /opt/ace ] ; then
+        rm -f /opt/ace
+    fi
+    [ -d /opt/sge.del ] && rm -fr /opt/sge.del
+    if [ -d /opt/sge ]; then
+       mv /opt/sge /opt/sge.del
+    elif [ -L /opt/sge ]; then
+        rm -f /opt/sge
+    fi
+    
+    dd if=/dev/zero of=/dev/sdb bs=512K count=1
+
+    # start default daemons
+    for dn in $recover_daemons; do
+       if [ -f /etc/init.d/$dn ]; then
+          /etc/init.d/$dn start
+          chkconfig --level 35 $dn on
+       fi
+    done
+}
+
+_k_ace_info_aci() {
+   local help="Get ACI information"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    (( $(id -u) == 0 )) || error_return "It need root account" || return 1
+    local aci_file
+    aci_file=$1
+    [ -n "$aci_file" ] || error_return "${FUNCNAME} <aci file>" || return 1
+    [ -f $ace_file ] || error_return "$aci_file not found" || return 1
+
+    tmp_root=$(mktemp -u /tmp/${FUNCNAME}-XXXXXXXXXXX)
+    [ -d $tmp_root/os ] || mkdir -p $tmp_root/os
+    echo "It take about 5 min."
+    tar zxSf $aci_file -C $tmp_root
+    Cluster_name=$(cat $tmp_root/cluster_name)
+    Cluster_rev=$(cat $tmp_root/revision)
+
+    mount -o loop $tmp_root/${Cluster_name}.${Cluster_rev}.img $tmp_root/os
+
+    OFED_Info=$(chroot $tmp_root/os ofed_info | head -n 1 | awk '{print $1}')
+    OS_Version=$(chroot $tmp_root/os rpm -qf /etc/issue)
+    Kernel_version=$(cat $tmp_root/acefs/clusters/$Cluster_name/kernel)
+    Kernel_args=$(cat $tmp_root/acefs/clusters/$Cluster_name/kernel_args)
+    exported_date=$(cat $tmp_root/date)
+    ace_version=$(echo $(cat $tmp_root/version | awk '{print $2}') | sed "s/ /-/g")
+    sleep 2
+    umount $tmp_root/os || umount -l $tmp_root/os
+    rm -fr $tmp_root
+    echo
+    echo "Release Date: $exported_date"
+    echo "ACE   : $ace_version"
+    echo "Kernel: $Kernel_version"
+    echo "ARGS  : $Kernel_args"
+    echo "OS    : $OS_Version"
+    echo "OFED  : $OFED_Info"
+    echo
+}
+
+_k_ace_clean_bootscript() {
+   local help="Clean boot script in boot_commands.d directory when duplicated from global to cluster"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+  local clusters acefs acefs_global_script acefs_cluster_script scr gscr
+  clusters=$*
+
+  acefs=$_K_ACE_FS
+  [ -n "$clusters" ] || clusters=$(ls $(_k_ace_db path clusters))
+
+  acefs_global_script=$acefs/global/mount/boot_commands.d
+
+  for cluster in $clusters; do
+    [ -d $acefs/clusters/$cluster ] || continue
+    echo "$cluster"
+    acefs_cluster_script=$acefs/clusters/$cluster/mount/boot_commands.d
+    if [ -d $acefs_cluster_script ]; then
+        for scr in $(ls $acefs_cluster_script); do
+             echo -n " - $scr : "
+             [ "$scr" == "1990-mount" ] && gscr=1001-mount || gscr=$scr
+             if [ -f $acefs_global_script/$gscr ]; then
+                  cmp $acefs_cluster_script/$scr $acefs_global_script/$gscr  >/dev/null && (rm -f $acefs_cluster_script/$scr && echo "Del(Same file)") || echo Different file with global
+             else
+                  echo "Not found in global"
+             fi
+        done
+     fi
+  done
+}
+
+
+_k_ace_get_filename() {
+    local app os ver aa version_file
+    app=$1
+    os=$2
+    ver=$3
+    version_file=$4 
+    [ -n "$version_file" ] || version_file=/opt/ace/sbin/version.map
+
+    aa=$(awk -v app=$app -v os=$os -v ver=$ver '{if($1==app && $3==os && $4<=ver && ver<=$5) print $6}' $version_file)
+    [ -n "$aa" ] || aa=$(awk -v app=$app -v os=$os -v ver=$ver '{if($1==app && $3==os && $4<=ver && "-"==$5) print $6}' $version_file)
+    [ -n "$aa" ] || aa=$(awk -v app=$app -v os=$os -v ver=$ver '{if($1==app && $3==os && $4=="-" && $ver<=$5) print $6}' $version_file)
+    [ -n "$aa" ] || aa=$(awk -v app=$app -v os=$os -v ver=$ver '{if($1==app && $3==os && $4=="-" && "-"==$5) print $6}' $version_file)
+    echo $aa
+}
+
+_k_ace_app_list() {
+    local os ver aa version_file
+    os=$1
+    ver=$2
+    version_file=$3 
+    [ -n "$version_file" ] || version_file=/opt/ace/sbin/version.map
+
+    cat $version_file | grep -v "^#" | while read line; do
+      echo "  -  $line"
+      aa=$(echo $line | awk  -v os=$os -v ver=$ver '{if($3==os && $4<=ver && ver<=$5) print $1}')
+      [ -n "$aa" ] || aa=$(echo $line | awk -v os=$os -v ver=$ver '{if($3==os && $4<=ver && "-"==$5) print $1}')
+      [ -n "$aa" ] || aa=$(echo $line | awk -v os=$os -v ver=$ver '{if($3==os && $4=="-" && $ver<=$5) print $1}')
+      [ -n "$aa" ] || aa=$(echo $line | awk -v os=$os -v ver=$ver '{if($3==os && $4=="-" && "-"==$5) print $1}')
+      [ -n "$aa" ] && echo "$aa"
+    done
+}
+

@@ -1,0 +1,492 @@
+#Kage Library 
+#$lib_ver$:0.0.107
+#   . $(dirname $0)/klib.so
+
+#include misc
+
+_k_loaded_net(){
+   local null
+}
+
+_k_net_help() {
+   echo "Network library, requirement misc"
+}
+
+_k_net(){
+    local BASHRC
+    BASHRC=$1
+    [ "$BASHRC" == "0" ] && return 1
+    if [ "$BASHRC" == "unload" ]; then
+        for bashrc_file in $_K_ETC/bashrc $_K_ETC/$(hostname).bashrc; do
+            if [ -f $bashrc_file ]; then
+                for unset_b in $(cat $bashrc_file  | grep -v "^#"  | grep export | awk -F= '{print $1}' | awk '{print $2}' ); do
+                     unset $unset_b
+                done
+                for unset_b in $(cat $bashrc_file  | grep -v "^#"  | grep "^k load"  | awk '{print $3}' ); do
+                     k unload $unset_b
+                done
+             fi
+        done
+    else
+        if [ -n "$_K_HOME" ]; then
+           [ -f $_K_ETC/bashrc ] && source $_K_ETC/bashrc
+           [ -f $_K_ETC/$(hostname).bashrc ] && source $_K_ETC/$(hostname).bashrc
+        fi
+    fi
+}
+
+#_k_net_close(){
+#}
+
+_k_net_ip_list() { #make a ip list
+  local start end ip range
+  if [ $# -ne 2 ]; then 
+     echo "_show_ip_list <ip> <range:num>"
+     return 1
+  else 
+     _ip=$1
+     range=$2
+
+     start=$(_k_net_str2ip $_ip)
+     end=$(( $start + $range ))
+     for ip in $(seq $start $end); do
+       echo $(_k_net_ip2str $ip)
+     done
+  fi
+}
+
+_k_net_host_list() { #make a hostname list
+   local hn hostname split end len
+   if [ $# -le 2 -o $# -gt 4 ]; then
+     echo "_k_net_host_list <hostname> <start #> <end #> <size of #>"
+     return 1
+     # kage-00010, kage-00011, ..., kage-00020" 
+   else 
+     hostname=$1
+     start=$2
+     end=$3
+     len=$4
+     [ -n "$len" ] || len=4
+     if (( ${#end} > $len )); then
+          error_exit "<end #> length (${#end}) is bigger then <size of # : $len>"
+     fi
+   
+     for hn in $(seq $start $end); do
+       if (($len <= 1 )); then
+           printf "%s%d\n" $hostname $hn
+       else
+           printf "%s%0${len}d\n" $hostname $hn
+       fi
+     done
+  fi
+}
+
+# _k_braket prod-00[01-03]
+_k_net_braket() {
+    _k_misc_braket $*
+}
+
+_k_net_ip2str() {
+    local num
+    num=$1
+    [ -n "$num" ] || error_exit "input not found"
+    echo $(( $(( $num/$((255*255*255)) ))% 255)).$(( $(($num/$((255*255)) ))%255)).$(( $(($num/255)) % 255)).$(($num%255))
+}
+
+_k_net_str2ip() {
+    [ -n "$1" ] || error_exit "input not found"
+    ip=( $(echo $1 | sed 's/\./ /g') )
+    echo $(( $((255*255*255*${ip[0]})) + $((255*255*${ip[1]})) + $((255*${ip[2]})) +${ip[3]} ))
+}
+
+_k_net_add_ip() {
+    [ -n "$1" ] || error_exit "IP not found"
+    [ -n "$2" ] || error_exit "add value not found"
+    echo $(_k_net_ip2str $(( $(_k_net_str2ip $1) + $2 )) )
+}
+
+_k_net_mac_cal() {
+    local mac mac_arr  val
+    #example : _k_net_mac_cal "<mac>" 2 
+    # result : <mac> - 2 
+#    _k_load misc
+    mac="$1"
+    mac_arr=( $(echo "$mac" |  sed "s/[:-]/ /g") )
+    val=$2
+    [ -n "$val" ] || val=2
+    id=$((${#mac_arr[*]}-1))
+
+    #get_mac_10="$(_k_misc_convert -s 16 -d 10 -v "${mac_arr[$id]}")"
+    gmac10_5="$((16#${mac_arr[$id]}))"
+    [ -n "$gmac10_5" ] || return 1
+    if (( $gmac10_5 < $val )); then
+       #if (( $(_k_misc_convert -s 16 -d 10 -v ${mac_arr[$(($id-1))]}) == 0 )); then
+       gmac10_4=$((16#${mac_arr[$((id-1))]}))
+       if (( $gmac10_4 == 0 )); then
+           #get_1=$(printf "%02x" $(( $(_k_misc_convert -s 16 -d 10 -v ${mac_arr[$(($id-2))]}) - 1 )) )
+           #get_2=$(printf "%02x" $(( $(_k_misc_convert -s 16 -d 10 -v ${mac_arr[$(($id-1))]}) + 256 - 1 )) )
+           get_1=$(printf "%02x" $(( $((16#${mac_arr[$(($id-2))]})) - 1 )) )
+           get_2=$(printf "%02x" $(( $gmac10_4 + 256 - 1 )) )
+       else
+           get_1=${mac_arr[$(($id-2))]}
+           #get_2=$(printf "%02x" $(( $(_k_misc_convert -s 16 -d 10 -v ${mac_arr[$(($id-1))]}) - 1 )) )
+           get_2=$(printf "%02x" $(( $gmac10_4 - 1 )) )
+       fi
+       #get_3=$(printf "%02x" $(( $(_k_misc_convert -s 16 -d 10 -v ${mac_arr[$id]}) + 256 - $val )) )
+       get_3=$(printf "%02x" $(( $((16#${mac_arr[$id]})) + 256 - $val )) )
+    else
+       get_1=${mac_arr[$(($id-2))]}
+       get_2=${mac_arr[$(($id-1))]}
+       #get_3=$(printf "%02x" $(( $(_k_misc_convert -s 16 -d 10 -v ${mac_arr[$id]}) - $val )) )
+       get_3=$(printf "%02x" $(( $((16#${mac_arr[$id]})) - $val )) )
+    fi
+    echo "${mac_arr[0]}:${mac_arr[1]}:${mac_arr[2]}:$get_1:$get_2:$get_3"
+}
+
+_k_net_mac_eth() {
+    cat /sys/class/net/$1/address
+}
+
+_k_net_get_eth_drivers() {
+    for dev in /sys/bus/pci/devices/*; do
+        [ "$(cat $dev/class)" != "0x020000" ] && continue
+        vendor=$(cat $dev/vendor | sed 's/^0x//')
+        device=$(cat $dev/device | sed 's/^0x//')
+        awk "\$2 == \"0x0000$vendor\" && \$3 == \"0x0000$device\" { print \$1; }" < /lib/modules/$(uname -r)/modules.pcimap
+    done
+}
+
+_k_net_start_telnetd() {
+    echo "root::0:0:root:/:/bin/ash" > /etc/passwd
+    [ -d /dev/pts ] || mkdir -p /dev/pts
+    chmod 0755 /dev/pts
+    chmod 600 /etc/passwd
+    mount -t devpts devpts /dev/pts
+    /usr/sbin/telnetd -l /bin/ash
+}
+
+
+_k_net_cstr2mac() {
+   local input simbol
+   input=$1
+   simbol=$2
+   [ -n "$simbol" ] || simbol=":"
+   for ((i=0;i<6;i++)); do
+       printf "%s" $(echo $input | cut -c $((1+$(($i*2))))-$((2*$(($i+1)) )) )
+       (($i<5)) && printf "%s" "$simbol"
+   done
+}
+
+_k_net_host_v1() {
+   local host search ss host_name  host_files
+   host_files="/etc/hosts $(echo $_K_HOSTS | sed "s/:/ /g")"
+
+   host=$1
+
+   for host_file in $host_files; do
+     if [ -f $host_file ]; then
+           host_name="$(awk -v host=$host '{if ($2==host || $1 == host ) print $1}' $host_file)"
+           if [ -n "$host_name" ]; then
+                  echo $host_name
+                  return 0
+           fi
+     fi
+   done
+
+   search=$host
+   if [ -f /etc/resolv.conf ]; then
+        for ss in $(awk '{if($1=="search") print}' /etc/resolv.conf | sed "s/search//g"); do
+             search="$search ${host}.$ss"
+        done
+   fi
+
+   for ss in $search; do 
+       host_name=$(host $ss 2>/dev/null) || continue
+       host_name=$(echo $host_name | awk '{print $1}')
+       if [ -n "$host_name" ]; then
+           echo $host_name
+           return 0
+       fi 
+   done
+
+   echo "$host not found"
+   return 1
+}
+
+_k_net_host_v2() {
+   local host search ss host_name  host_files dns_servers host_arr
+   host_files="/etc/hosts $(echo $_K_HOSTS | sed "s/:/ /g")"
+
+   host=$1
+
+   for host_file in $host_files; do
+     if [ -f $host_file ]; then
+           host_name="$(awk -v host=$host '{if ($2==host || $1 == host ) print $1}' $host_file)"
+           if [ -n "$host_name" ]; then
+                  echo $host_name
+                  return 0
+           fi
+     fi
+   done
+
+   dns_servers="$(echo $_K_DNS | sed "s/:/ /g") $([ -f /etc/resolv.conf ] && cat /etc/resolv.conf  | grep "^nameserver" | awk '{print $2;}')"
+   for dns in $dns_servers; do
+       if host_arr=( $(nslookup -timeout=1 $host $dns | grep "^Address:") ); then
+           echo ${host_arr[1]}
+           return 0
+       elif host_arr=( $(nslookup -timeout=1 $host $dns | grep ".in-addr.arpa") ); then
+           echo $host
+#           echo $(${host_arr[3]} |sed "s/\.$//g")
+           return 0
+       fi
+   done
+
+   search=$host
+   if [ -f /etc/resolv.conf ]; then
+        for ss in $(awk '{if($1=="search") print}' /etc/resolv.conf | sed "s/search//g"); do
+             search="$search ${host}.$ss"
+        done
+   fi
+
+   for ss in $search; do
+       host_name=$(host $ss 2>/dev/null) || continue
+       host_name=$(echo $host_name | awk '{print $1}')
+       if [ -n "$host_name" ]; then
+           echo $host_name
+           return 0
+       fi
+   done
+
+   echo "$host not found"
+   return 1
+}
+
+
+_k_net_nslookup() {
+   local host search ss host_name  host_files dns_servers host_arr
+   host_files="/etc/hosts $(echo $_K_HOSTS | sed "s/:/ /g")"
+
+   host=$1
+
+   if echo $host |grep "^h[0-9]" >& /dev/null; then
+        echo $(echo $host| sed "s/^h/192.168.1./g")
+        return 0
+   elif echo $host |grep "^cf[0-9]" >& /dev/null; then
+        echo $(echo $host| sed "s/^cf/172.30.64./g")
+        return 0
+   fi
+
+   for host_file in $host_files; do
+     if [ -f $host_file ]; then
+           host_name="$(awk -v host=$host '{if ($2==host || $1 == host ) printf "%s %s",$1,$2}' $host_file | grep -v "^#")"
+           if [ -n "$host_name" ]; then
+                  echo $host_name $host_file 
+                  return 0
+           fi
+     fi
+   done
+
+   search=$host
+   if  _k_misc_is_num $search >/dev/null 2>&1; then
+     echo $search 
+     return 0
+   else
+     if [ -f /etc/resolv.conf ]; then
+        for ss in $(awk '{if($1=="search") print}' /etc/resolv.conf | sed "s/search//g"); do
+             search="$search ${host}.$ss"
+        done
+     fi
+   fi
+
+   dns_servers="$(echo $_K_DNS | sed "s/:/ /g") $([ -f /etc/resolv.conf ] && cat /etc/resolv.conf  | grep "^nameserver" | awk '{print $2;}')"
+   for dns in $dns_servers; do
+       for ss in $search; do
+           host_arr=( $(nslookup -timeout=1 $ss $dns | grep -e "^Name:" -e "^Address:" | grep -v "#53$" | awk '{print $2}') )
+           if (( ${#host_arr[*]} > 1 )); then
+               echo "${host_arr[1]} ${host_arr[0]} $dns"
+               return 0
+           elif host_arr=( $(nslookup -timeout=1 $ss $dns | awk '{if($2=="name") print}' | grep ".in-addr.arpa") ); then
+               echo "$ss $(echo ${host_arr[3]} |sed "s/\.$//g") $dns"
+               return 0
+           fi
+       done
+   done
+
+   echo "$host not found"
+   return 1
+}
+
+_k_net_host() {
+    local host search
+    host=$1
+    if search=( $(_k_net_nslookup $host) ); then
+        echo ${search[0]}
+        return 0
+    fi
+    return 1
+}
+
+_k_net_state() {
+    local dev port
+    dev=$1
+    port=$2
+    if echo $dev | grep -e "^eth" -e "^ib" >/dev/null ; then
+        [ -f /sys/class/net/$dev/operstate ] && cat /sys/class/net/$dev/operstate || return 1
+    elif echo $dev | grep -e "^mlx" -e "^qib" >/dev/null ; then
+        [ -f /sys/class/infiniband/$dev/ports/$port/phys_state ] && cat /sys/class/infiniband/$dev/ports/$port/phys_state | awk '{print $2}' || return 1
+    else
+        return 1
+    fi
+}
+
+_k_net_type() {
+    local dev port
+    dev=$1
+    port=$2
+    if echo $dev | grep -e "^eth" -e "^ib" >/dev/null ; then
+        echo "Ethernet"
+    elif echo $dev | grep -e "^mlx" -e "^qib" >/dev/null ; then
+        [ -f /sys/class/infiniband/$dev/ports/$port/link_layer ] && cat /sys/class/infiniband/$dev/ports/$port/link_layer || return 1
+    else
+        return 1
+    fi
+}
+
+_k_net_get_ip() {
+    local dev
+    dev=$1
+    ifconfig $dev | grep "inet addr:" | awk '{print $2;}' | sed "s/addr://g"    
+}
+
+_k_net_ifconfig() {
+    local input ip_network ip_addr ip_dev ip_netmask ip_host
+    input=($*)
+    argc=$((${#input[*]}-1))
+
+    if [ "${input[$argc]}" == "stop" -o "${input[$argc]}" == "down" ]; then
+        ip_netmask=$(ifconfig ${input[0]} | grep "inet addr" | awk '{print $4}' | awk -F: '{print $2}')
+        ip_addr=$(ifconfig ${inpute[0]} | grep "inet addr" | awk '{print $2}' | awk -F: '{print $2}')
+        ip_dev=$(echo ${input[0]} |awk -F: '{print $1}')
+
+        ip addr | grep "${input[0]}$" | grep "$ip_addr"  >/dev/null && ip addr del $ip_addr dev $ip_dev
+        if [ "$(ip route | awk -v dev=$ip_dev -v ip=$ip_addr '{if($3==dev && $9==ip) printf "being"}')" == "being" ]; then
+            ip_network=($(_k_net_ip_net $ip_addr $ip_netmask))
+            ip route delete  ${ip_network[0]}/${ip_network[1]} dev $ip_dev proto kernel scope link src $ip_addr
+        fi
+        if ip rule ls | grep "$ip_addr" >/dev/null; then
+            ip_host=$(ip rule ls | grep "$ip_addr" | awk '{print $5}')
+            ip rule delete from $ip_addr lookup $ip_host
+        fi
+        ifconfig ${input[0]} down
+    elif [ "${input[$argc]}" == "start" -o "${input[$argc]}" == "up" ]; then
+        ${input[$argc]}=""
+        ifconfig ${input[*]}
+    else
+        ifconfig $*
+    fi
+}
+
+_k_net_get_mac() {
+    local dev
+    dev=$1
+    [ -f /sys/class/net/$dev/address ] && cat /sys/class/net/$dev/address
+}
+
+_k_net_get_dev() {
+    ls /sys/class/net
+}
+
+_k_net_check_dev() {
+    local dev
+    dev=$1
+    [ -d /sys/class/net/$dev ] && return 0 || return 1
+}
+
+_k_net_forward() {
+    [ "$(cat /proc/sys/net/ipv4/ip_forward)" == "1" ] || echo 1 > /proc/sys/net/ipv4/ip_forward
+}
+
+_k_net_ip_net() {
+  local net mm nn ip
+  ip=$1
+  netmask=$2
+  net=""
+  mm=1
+  nn=0
+  for ii in $(echo $netmask | sed "s/\./ /g"); do
+      if [ "$ii" == "255" ]; then
+          net="$net$(echo $ip | awk -F. -v m=$mm '{printf "%s",$m}')"
+          nn=$(($nn+1))
+      else
+          net="${net}0"
+      fi
+      (( $mm < 4 )) && net="${net}."
+      mm=$(($mm+1))
+  done
+  echo $net $(($nn*8))
+}
+
+_k_net_ip_route() {
+  local ip host device netmask net mm nn end_ip
+  device=$1
+  ip=$2
+  netmask=$3
+  host=$4
+
+
+  end_ip=$(echo $ip | awk -F. '{print $4}')
+  for del_line in $(awk -v host=$host -v eip=$end_ip '{if($2==host && $1!=eip ) print NR}' /etc/iproute2/rt_tables); do
+           sed -i "${del_line}d" /etc/iproute2/rt_tables
+  done
+  [ "$(awk -v host=$host -v eip=$end_ip '{if($2==host && $1==eip ) printf "being" }' /etc/iproute2/rt_tables)" == "being" ] || echo "$end_ip $host" >> /etc/iproute2/rt_tables
+
+
+  if [ "$(ip rule ls | awk -v xhost=$host '{if($5==xhost) printf "exist"}')" != "exist" ]; then
+       ip rule add from $ip lookup $host
+       ip_network=($(_k_net_ip_net $ip $netmask))
+       ip route add ${ip_network[0]}/${ip_network[1]} dev $device proto kernel scope link src $ip table $host
+  else
+      echo "running $device for $host"
+  fi
+}
+
+_k_net_ip_route2dev() {
+  local ip netmask device host
+  mode=$1
+  [ "$mode" != "up" -a "$mode" != "down" ]  && return 1
+  device=$2
+  ip=$3
+  netmask=$4
+  host=$5
+  [ -d /sys/class/net/$device ] || error_return "$device not found" || return 1
+  if [ "$mode" == "up" ]; then
+      if [ "$(cat /sys/class/net/$device/operstate)" == "down" ]; then
+          echo "$host($ip) set to $device"
+          ifconfig $device $ip netmask $netmask up
+      fi
+      _k_net_ip_route $device $ip $netmask $host
+  else 
+      ip_network=($(ip_net $ip $netmask))
+      ip route delete ${ip_network[0]}/${ip_network[1]} dev $device proto kernel scope link src $ip table $host 2>/dev/null
+      [ "$(ip rule ls | awk -v xhost=$host '{if($5==xhost) printf "exist"}')" == "exist" ] && ip rule delete from $ip lookup $host
+      ifconfig $device down
+   fi
+}
+
+_k_net_chk_dev() {
+    local dev ip netmask 
+    dev=$1
+    [ -n "$dev" ] || return 1
+    [ -d /sys/class/net/$dev ] || error_return "$dev : not found" || return 1
+    if [ "$(cat /sys/class/net/$dev/operstate)" == "down" ]; then
+         echo "$dev : down"
+    else 
+         ip=$(ifconfig $dev | grep "inet addr" | awk '{print $2}' | awk -F: '{print $2}')
+         netmask=$(ifconfig $dev | grep "inet addr" | awk '{print $4}' | awk -F: '{print $2}')
+         echo -n "$dev : $ip $netmask" 
+         ip addr | grep "$dev" | grep "net" >/dev/null && echo -n " (set ip addr)"
+         ip route | grep "$dev" >/dev/null && echo -n " (set ip route)"
+         ip rule ls | grep "$ip"  >/dev/null && echo -n " (set ip rule)"
+         echo
+    fi
+}

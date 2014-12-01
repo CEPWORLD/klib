@@ -1,0 +1,60 @@
+#Kage Library  - dhcp
+#$lib_ver$:0.0.4
+
+_k_loaded_dhcp(){
+   local null
+}
+
+_k_dhcp_help() {
+    local help="Library dhcp's  help
+Usage) ${FUNCNAME} "
+    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    echo "Library : dhcp "
+}
+
+
+_k_dhcp(){
+    [ -n "$_K_LIB" ] || error_return "_K_LIB not found" || return 1
+    local help="Library dhcp's start function
+Usage) ${FUNCNAME} "
+    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    ### start(open) library code here ###
+    dhcp_leases=/var/lib/dhcpd/dhcpd.leases
+}
+
+
+#_k_dhcp_close(){
+#    local help=" Library dhcp's closing function
+#Usage) ${FUNCNAME} "
+#    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+#    ### close library code here ###
+#}
+
+
+_k_dhcp_check(){
+    local help="DHCP daemon check
+Usage) ${FUNCNAME} "
+    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    ### your code here ###
+    ps -ef |grep dhcpd | grep -v grep >/dev/null && return 0 || return 1
+}
+
+_k_dhcp_pid(){
+    local help="DHCP daemon check
+Usage) ${FUNCNAME} "
+    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    ### your code here ###
+    ps -ef |grep dhcpd | grep -v grep | awk '{print $2;}'
+}
+     
+_k_dhcp_get_ip() {
+    local help="get DHCP IP address of input mac
+Usage) ${FUNCNAME} <mac address>"
+    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   local mac
+   mac=$1
+   [ -n "$mac" ] || error_return "mac not found" || return 1
+   dhcp_line=$(cat $dhcp_leases | grep -n $server_mac | tail -n 1 | awk -F: '{print $1}')
+   cat $dhcp_leases | sed -n "$(($dhcp_line-6)) p" | awk '{print $2}'
+}
+

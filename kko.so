@@ -1,0 +1,40 @@
+#Kage Library  - ko
+#$lib_ver$:0.0.1
+
+_k_loaded_ko(){
+   local null
+}
+
+_k_ko_help() {
+    local help="Library ko's  help
+Usage) ${FUNCNAME} "
+    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    echo "Library : ko "
+}
+
+
+_k_ko(){
+    [ -n "$_K_LIB" ] || error_return "_K_LIB not found" || return 1
+    local help="Library ko's start function
+Usage) ${FUNCNAME} "
+    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    ### start(open) library code here ###
+}
+
+
+#_k_ko_close(){
+#    local help=" Library ko's closing function
+#Usage) ${FUNCNAME} "
+#    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+#    ### close library code here ###
+#}
+
+
+#_k_ko_example(){
+#    local help="help
+#Usage) ${FUNCNAME} "
+#    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+#    ### your code here ###
+#}
+
+     

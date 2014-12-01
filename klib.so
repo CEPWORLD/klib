@@ -1,0 +1,1881 @@
+#Kage Library 
+#$lib_ver$:1.1.108
+
+##
+## ${FUNCNAME} is local function name
+##
+   
+[ -n "$_K_LIB" ] || export _K_LIB=$(dirname $0)
+[ -n "$_K_HOME" ] || export _K_HOME=$(dirname $_K_LIB)
+[ -n "$_K_BIN" ] || export _K_BIN=$_K_HOME/kbin
+[ -n "$_K_ETC" ] || export _K_ETC=$_K_HOME/ketc
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin:$_K_BIN:$PATH
+
+BASHRC=$1
+
+_k_lib() {
+  local help="KLibrary's initialization function"
+  [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   _K_XCODE_TAG=k
+   _K_XCODE_HELP=k_help
+   _K_ICODE_LEXEC=2
+   _K_ICODE_END=50
+}
+declare -F _k_lib  >/dev/null && _k_lib
+
+_k_loaded_lib() {
+   local null
+}
+
+error_exit(){
+   local help="show error code and exit shell
+Usage) ${FUNCNAME} <error msg>"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   echo "$*"
+   exit 1
+}
+
+error_return(){
+   local help="show error code and return function
+Usage) ${FUNCNAME} <error msg>"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   echo "$*"
+   return 1
+}
+
+_k_lib_opt() {
+   local help="KLIB's simple option function
+Usage) ${FUNCNAME} <string> <find option> [ <special option> ]
+  <find option> is -get_name : find data exclude option
+  <others>  : print all words after find option when no more options after the option
+  <null>    : print <one word / between options> after find option when no more other options after the option"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   local input find find_location find_temp opt
+   input=($1)
+   find=$2
+   opt=$3
+
+   ((${#input[*]}==0)) && return 1
+
+   # Find name
+   # option : full => print all words after any option
+   # option : str  => print all words exclude first word after any option
+   # option : <null> => print one words of first or last
+   if [ "$find" == "-get_name" ]; then
+             if echo ${input[0]} | grep "^-" >/dev/null; then
+                  echo ${input[$((${#input[*]}-1))]} | grep "^-" >/dev/null && return 1
+                  if [ -n "$opt" ]; then
+                      for ((jj=$((${#input[*]}-1)); jj>0 ; jj-- )); do
+                          echo ${input[$jj]} | grep "^-" >/dev/null && break
+                      done
+                      [ "$opt" == "full" ] && kk=$((jj+1)) || kk=$((jj+2))
+                      for ((; kk<${#input[*]};kk++)); do
+                          echo ${input[$kk]}
+                      done
+                  else
+                      echo ${input[$((${#input[*]}-1))]}
+                  fi
+                  return 0
+             else
+                  if [ -n "$opt" ]; then
+                      for ((jj=0; jj<${#input[*]};jj++)); do
+                          echo ${input[$jj]} | grep "^-" >/dev/null && return 0
+                          echo ${input[$jj]}
+                      done
+                  else
+                      echo ${input[0]}
+                  fi
+                  return 0
+             fi
+
+            return 1
+   fi
+
+   # Find option
+   for ((ii=0;ii<${#input[*]};ii++)); do
+            if [ "${input[$ii]}" == "$find" ]; then
+                find_location=$ii
+                continue
+            fi
+            echo ${input[$ii]} | grep "^-" >/dev/null && break
+            if [ -n "$find_location" ]; then
+                find_temp="$find_temp ${input[$ii]}"
+            fi
+   done
+
+   if [ -n "$find_temp" -a "${#input[*]}" == "$ii" -a ! -n "$opt" ]; then
+        echo ${input[find_location+1]}
+        return 0
+   elif [ -n "$find_temp" ]; then
+        echo $find_temp
+        return 0
+   elif [ -n "$find_location" ]; then
+        return 0
+   fi
+
+   return 1
+}
+
+_k_ask() {
+   local x
+   echo -n "$* "
+   read x
+   [ "X$x" == "XY" -o "X$x" == "Xy" -o "X$x" == "XYES" -o "X$x" == "XYes" -o "X$x" == "Xyes" ] && return 0 || return 1
+}
+
+_k_lib_help() {
+  local help="KLibrary's help"
+  [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   echo "Kage Base Library file"
+}
+
+_k_put_lib() {
+   local help="Add library path to KLibrary's PATH
+Usage) ${FUNCNAME} <path>[:<path2>...]"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+  [ -n "$1" ] &&  export _K_LIB="$_K_LIB:$1"
+}
+
+_k_get_path() {
+   local paths
+   paths=$*
+   for path in $(echo $paths | sed "s/:/ /g"); do
+        echo -n "$path "
+   done
+}
+
+_k_find_file() {
+    local path name arr_path
+    name=$1
+    shift 1
+    path=$*
+    [ -n "$path" ] || path=$PATH
+    arr_path=($(_k_get_path $path))
+    for ((ii=0;ii<${#arr_path[*]};ii++)); do
+        if [ -f ${arr_path[$ii]}/$name ]; then
+             echo ${arr_path[$ii]}/$name
+             return 0
+        fi
+    done
+    echo "$name not found"
+    return 1
+}
+
+_k_check_lib_v1() {
+  local name help
+  help="find the lib name in all _K_LIB dir
+Usage) ${FUNCNAME} <lib name>"
+  [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+  name=$1
+  [ -n "$name" ] || error_return $help
+  for lib_dir in $(_k_get_path $_K_LIB); do
+      if [ -f $lib_dir/${_K_XCODE_TAG}${name}.so ]; then
+           echo $lib_dir/${_K_XCODE_TAG}${name}.so
+           return 0
+      elif [ -f $lib_dir/${name} ]; then
+           echo $lib_dir/${name}
+           return 0
+      fi
+  done
+  return 1
+}
+
+_k_check_lib() {
+  local name help
+  help="find the lib name in all _K_LIB dir
+Usage) ${FUNCNAME} <lib name>"
+  [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+  name=$1
+  [ -n "$name" ] || error_return $help
+  _k_find_file ${_K_XCODE_TAG}${name}.so $_K_LIB || _k_find_file ${name} $_K_LIB || return 1
+  return 0
+}
+
+_k_load_v1() {
+  local name  opt 
+  name=$1
+  opt=$2
+  if [ $# -ne 1 ]; then
+     error_return "_k_load <lib name>"
+  else
+     if [ -f $_K_LIB/${_K_XCODE_TAG}${name}.so ]; then
+         if [ "$opt" == "-f" ]; then
+             . $_K_LIB/${_K_XCODE_TAG}${name}.so
+             declare -F -p | cut -d " " -f 3 | grep "^_k_${name}$" > /dev/null 2>&1 && _k_${name}
+         elif ! _k_list_lib | grep "^$name$" > /dev/null ; then
+             . $_K_LIB/${_K_XCODE_TAG}${name}.so
+             declare -F -p | cut -d " " -f 3 | grep "^_k_${name}$" > /dev/null 2>&1 && _k_${name}
+         else
+             echo "${name} loaded before"
+         fi
+     elif [ -f $_K_LIB/${name} ]; then
+         . $_K_LIB/${name}
+     else
+        echo "File not found"
+        return 1
+     fi
+  fi
+  return 0
+}
+
+_k_load_v2() {
+  local name  opt lib
+  name=$1
+  opt=$2
+  if [ $# -ne 1 ]; then
+     error_return $help
+  else
+     lib=$(_k_check_lib $name) || error_return "library $name not found" || return 1
+
+     if [ "$opt" == "-f" ]; then
+         . $lib
+         declare -F -p | cut -d " " -f 3 | grep "^_k_${name}$" > /dev/null 2>&1 && _k_${name}
+     elif ! _k_list_lib | grep "^$name$" > /dev/null ; then
+         . $lib
+         declare -F -p | cut -d " " -f 3 | grep "^_k_${name}$" > /dev/null 2>&1 && _k_${name}
+     else
+         echo "${name} loaded before"
+     fi
+  fi
+  return 0
+}
+
+d_k_load_v3() {
+  local name  opt lib help chk
+  name=$1
+  opt=$2
+  chk=0
+  if [ $# -ne 1 ]; then
+     error_return $help
+  else
+     lib=$(_k_check_lib $name) || error_return "library $name not found" || return 1
+     _k_list_lib $name > /dev/null && chk=1
+
+     if [ "$opt" == "-f" ]; then
+         [ "$chk" == "1" ] && _k_unload $name
+         . $lib
+     elif [ "$chk" == "1" ]; then
+         echo "${name} loaded before"
+         return 1
+     else 
+         . $lib
+     fi
+     #declare -F _k_${name} > /dev/null  && _k_${name}
+     if declare -F _k_${name} > /dev/null; then
+         _k_${name}
+     fi
+  fi
+  return 0
+}
+
+_k_load_v4() {
+  local name  opt lib help
+
+  if [ "$#" == "0" ]; then
+     error_return "${FUNCNAME} <lib name> [<opt>]"
+  else
+     name=$1
+     _k_lib_opt "$*" -f >/dev/null && opt="-f"
+     name=$(_k_lib_opt "$*" -get_name) || return_error "${FUNCNAME} <lib name> [<opt>]" || return 1
+     lib=$(_k_check_lib $name) || error_return "library $name not found" || return 1
+
+     if _k_list_lib $name > /dev/null; then
+         if [ "$opt" == "-f" ]; then
+             _k_unload $name "$opt"
+             . $lib
+         else
+             echo "${name} loaded before"
+             return 1
+         fi
+     else
+         . $lib
+     fi
+     if [ "$opt" != "-n" ]; then
+        declare -F _k_${name} > /dev/null  && _k_${name}
+     fi
+  fi
+  return 0
+}
+
+_k_load_v5() {
+  local name  opt lib
+  if [ "$1" == "-n" -o "$1" == "-vv" -o "$1" == "-f" ]; then
+       opt=$1
+       shift 1
+  fi
+  name=$1
+
+  if [ "$#" == "0" ]; then
+     error_return "${FUNCNAME} [ <opt> ] <lib name> [...]" || return 1
+  else
+     lib=$(_k_check_lib $name) || error_return "library $name not found" || return 1
+
+     if _k_list_lib $name > /dev/null; then
+             if [ "$opt" == "-f" ]; then
+                 _k_unload $name "$opt"
+                 . $lib
+             else
+                 echo "Library $name Loaded before"
+                 return 1
+             fi
+     else
+             [ "$opt" == "-vv" ] && set -x
+             . $lib 
+             if [ "$opt" == "-vv" ]; then
+                 set +x
+             fi
+     fi
+
+     if [ "$opt" != "-n" ]; then
+            declare -F _k_${name} > /dev/null  && _k_${name}
+     fi
+
+     #Delete not using function
+     for delf in $(grep "^d_k_" $lib | grep "()" | grep "{$" | sed "s/()//g" | sed "s/{$//g"); do
+             unset $delf
+     done
+  fi
+  return 0
+}
+
+_k_load_v6() {
+  local name  opt lib
+
+  [ "$#" != "0" ] ||   error_return "${FUNCNAME} [ <opt> ] <lib name>" || return 1
+
+  _k_lib_opt "$*" -f >/dev/null && opt="-f"
+  _k_lib_opt "$*" -vv >/dev/null && opt="-vv"
+  _k_lib_opt "$*" -n >/dev/null && opt="-n"
+  names=$(_k_lib_opt "$*" -get_name full) || return_error "${FUNCNAME} <lib name> [<opt>]" || return 1
+  for name in $names; do
+     lib=$(_k_check_lib $name) || error_return "library $name not found" || return 1
+
+     if _k_list_lib $name > /dev/null; then
+             if [ "$opt" == "-f" ]; then
+                 _k_unload $name "$opt"
+                 . $lib
+             else
+                 echo "Library $name Loaded before"
+                 return 1
+             fi
+     else
+             [ "$opt" == "-vv" ] && set -x
+             . $lib
+             if [ "$opt" == "-vv" ]; then
+                 set +x
+             fi
+     fi
+
+     if [ "$opt" != "-n" ]; then
+            declare -F _k_${name} > /dev/null  && _k_${name}
+     fi
+
+     #Delete not using function
+     for delf in $(grep "^d_k_" $lib | grep "()" | grep "{$" | sed "s/()//g" | sed "s/{$//g"); do
+             unset $delf
+     done
+  done
+  return 0
+}
+
+_k_load() {
+  local help
+  help="Loading library and print loaded library names
+if library not found then return 1
+if found previous loaded then not show library name but return 0
+
+Usage) ${FUNCNAME} [<opt>] <lib name> [...]
+  -f : force reload
+  -vv : show detail load information
+  -n : load lib but not start initial library function
+"
+  [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   _k_load_v6 $* && return 0 || return 1
+}
+
+_k_req_list() {
+  local help="Show Requirement Library's names
+Usage) ${FUNCNAME} [ -f ] <lib name>
+   -f : Full requirement list of the lib
+"
+  [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+  local name  opt pll lib plib
+  _k_lib_opt "$*" -f >/dev/null && opt="-f"
+  name=$(_k_lib_opt "$*" -get_name)
+#  name=$1
+#  (( $# == 1 ))  || error_return $help ||  return 1
+  [ -n "$name" ]  || error_return "$help" ||  return 1
+  lib=$(_k_check_lib $name) || error_return "$name not found" || return 1
+  for rl in $(grep "^#include" $lib | awk '{print $2}' | sort | uniq); do
+       _k_list_lib $rl >/dev/null && echo *$rl || echo $rl
+       if [ "$opt" == "-f" ]; then
+             _k_req_list $rl
+       fi
+  done
+  return 0
+}
+
+_k_preload_v1() {
+  local name  opt pll
+  name=$1
+  if [ $# -ne 1 ]; then
+     error_return "_k_preload <lib name>"
+  else
+     if [ -f $_K_LIB/${_K_XCODE_TAG}${name}.so ]; then
+         pre_lib=$(grep "^#include" $_K_LIB/${_K_XCODE_TAG}${name}.so | awk '{print $2}' | sort | uniq)
+         for pll in $pre_lib; do
+           if ! _k_list_lib | grep "^$pll$" > /dev/null ; then
+             if [ -f $_K_LIB/${_K_XCODE_TAG}${pll}.so ]; then
+               . $_K_LIB/${_K_XCODE_TAG}${pll}.so
+               declare -F -p | cut -d " " -f 3 | grep "^_k_${pll}$" > /dev/null 2>&1 && _k_${pll}
+               _k_preload_list="$_k_preload_list $pll"
+             else
+               return 1
+             fi
+           fi
+         done
+     else
+        return 1
+     fi
+  fi
+  echo "$_k_preload_list"
+  return 0
+}
+
+_k_preload_v2() {
+  local name  opt pll lib plib
+  name=$1
+  if [ $# -ne 1 ]; then
+     error_return $help || return 1
+  else
+     lib=$(_k_check_lib $name) || error_return "$name not found" || return 1
+     pre_lib=$(grep "^#include" $lib | awk '{print $2}' | sort | uniq)
+     for pll in $pre_lib; do
+         #if ! _k_list_lib | grep "^$pll$" > /dev/null ; then
+         if ! _k_list_lib $pll > /dev/null ; then
+             plib=$(_k_check_lib $pll) || error_return "$pll not found" || return 1
+             . $plib
+             declare -F -p | cut -d " " -f 3 | grep "^_k_${pll}$" > /dev/null 2>&1 && _k_${pll}
+             _k_preload_list="$_k_preload_list $pll"
+         fi
+     done
+  fi
+  echo "$_k_preload_list"
+  return 0
+}
+
+
+_k_preload_v3() {
+  local name  opt pll lib plib
+  name=$1
+  if [ $# -ne 1 ]; then
+     error_return $help || return 1
+  else
+     lib=$(_k_check_lib $name) || error_return "$name not found" || return 1
+     pre_lib="$(grep "^#include" $lib | awk '{print $2}' | sort | uniq) $name"
+     for pll in $pre_lib; do
+         if ! _k_list_lib $pll > /dev/null ; then
+             _k_load $pll
+             _k_preload_list="$_k_preload_list $pll"
+         fi
+     done
+  fi
+  
+  echo "$_k_preload_list"
+  return 0
+}
+
+_k_preload_v4() {
+  local name  opt pll lib plib
+  name=$1
+  if [ $# -ne 1 ]; then
+     error_return $help || return 1
+  else
+     pre_lib="$(_k_req_list $name) $name" || error_return "$name not found" || return 1
+     for pll in $pre_lib; do
+          _k_load $pll && _k_preload_list="$_k_preload_list $pll"
+     done
+  fi
+  echo $_k_preload_list
+  return 0
+}
+
+_k_preload_v5() {
+  local name  opt pll lib plib
+  name=$1
+  if [ $# -ne 1 ]; then
+     error_return $help || return 1
+  else
+     pre_lib="$(_k_req_list $name -f |grep -v "^*") $name" || error_return "$name not found" || return 1
+     _k_preload_list="$pre_lib"
+     for pll in $_k_preload_list; do
+          _k_load $pll 
+     done
+  fi
+  echo $_k_preload_list
+  return 0
+}
+
+_k_preload() {
+  local help="Pre-load Library's requirement librarys
+Usage) ${FUNCNAME} <lib name>"
+  [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   _k_preload_v5 $* || return 1
+}
+
+_k_unpreload() {
+   local help="Unload of preloaded librarys
+Usage) ${FUNCNAME} <lib name> [...]"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    local _k_preload_list_arr
+    _k_preload_list_arr=($*)
+    for ((i=$((${#_k_preload_list_arr[*]}-1)); i>=0; i--)); do
+           _k_unload ${_k_preload_list_arr[$i]}
+    done
+}
+
+_k_unload_v1() {
+  local name ln opt
+  name=$1
+  if [ $# -ne 1 ]; then
+     error_return "_k_unload <lib name>"
+  else
+     declare -F -p | cut -d " " -f 3 | grep "^_k_${name}_close$" > /dev/null 2>&1 && _k_${name}_close
+     for ln in $(grep "^_k_" $_K_LIB/${_K_XCODE_TAG}${name}.so | awk -F\( '{print $1}'); do
+        unset $ln > /dev/null 2>&1
+     done
+  fi
+}
+
+_k_unload_v2() {
+  local name ln opt lib
+  name=$1
+  if [ $# -ne 1 ]; then
+     error_return "${FUNCNAME} <lib name>" || return 1
+  else
+     lib=$(_k_check_lib $name) || return 1
+     declare -F -p | cut -d " " -f 3 | grep "^_k_${name}_close$" > /dev/null 2>&1 && _k_${name}_close
+     for ln in $(grep "^_k_" $lib | grep "()" | awk -F\( '{print $1}'); do
+        unset $ln > /dev/null 2>&1
+     done
+  fi
+}
+
+_k_unload_v3() {
+  local name ln opt lib func_lists
+  name=$1
+  opt=$2
+  if [ "$#" == "0" ]; then
+     error_return "${FUNCNAME} <lib name>" || return 1
+  else
+     [ -n "$opt" ] || declare -F _k_${name}_close > /dev/null 2>&1 && _k_${name}_close
+     for ln in $(func_lists=$(_k_list_function $name) && echo $func_lists) ; do
+        unset $ln > /dev/null 2>&1
+     done
+  fi
+}
+
+_k_unload_v4() {
+  local name ln opt lib func_lists
+  if [ "$#" == "0" ]; then
+     error_return "${FUNCNAME} [<opt>] <lib name> [...]" || return 1
+  else
+     if [ "$1" == "-n" -o "$1" == "-vv" -o "$1" == "-f" ]; then
+         opt=$1
+         shift 1
+     fi
+     for name in $*; do
+         if [ "$opt" != "-n" ]; then
+              declare -F _k_${name}_close > /dev/null 2>&1 && _k_${name}_close
+         fi
+         for ln in $(func_lists=$(_k_list_function $name) && echo $func_lists) ; do
+            unset $ln > /dev/null 2>&1
+         done
+     done
+  fi
+}
+
+_k_unload_v5() {
+  local name ln opt lib func_lists
+  [ "$#" != "0" ] ||  error_return "${FUNCNAME} [<opt>] <lib name> [...]" || return 1
+  if [ "$1" == "-n" -o "$1" == "-vv" -o "$1" == "-f" ]; then
+         opt=$1
+         shift 1
+  fi
+  for name in $*; do
+         if [ "$opt" != "-n" ]; then
+              declare -F _k_${name}_close > /dev/null 2>&1 && _k_${name}_close
+         fi
+         for ln in $(func_lists=$(_k_list_function $name) && echo $func_lists) ; do
+            unset $ln > /dev/null 2>&1
+         done
+  done
+}
+
+_k_unload() {
+  local help
+  help="unload library
+Usage) ${FUNCNAME} <lib name>"
+  [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   _k_unload_v5 $* || return 1
+}
+
+_k_reload() {
+    local help
+    help="Reload the library
+Usage) ${FUNCNAME} <lib name>"
+  [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    _k_unload $1
+    _k_load $1
+}
+
+_k_lexec_v1() {
+    #ex : _k_lexec <lib name> <function> <options...>
+    local klib preload _k_preload_list pll _k_preload_list_arr 
+    klib=$1
+    [ -n "$klib" ] || error_return $help || return 1
+    shift 1
+    _k_load $klib
+    if [ "$?" == "0" ]; then
+        _k_preload_list="$_k_preload_list $klib"
+    fi
+
+    _k_preload $klib
+
+    #EXEC
+    $*
+
+    if [ -n "$_k_preload_list" ]; then
+        _k_preload_list_arr=($_k_preload_list)
+        for ((i=$((${#_k_preload_list_arr[*]}-1)); i>=0; i--)); do
+           _k_unload ${_k_preload_list_arr[$i]}
+        done
+    fi
+}
+
+_k_lexec_v2() {
+    #ex : _k_lexec <lib name> <function> <options...>
+    local klib preload _k_preload_list pll _k_preload_list_arr chk tmp_pid
+    klib=$1
+    [ -n "$klib" ] || error_return $help || return 1
+    shift 1
+
+    tmp_pid=$(mktemp /tmp/${FUNCNAME}-XXXXXXXXX)
+    _k_preload $klib > $tmp_pid && _k_preload_list=$(cat $tmp_pid)
+    rm -f $tmp_pid
+
+    #EXEC
+    _k_list $function >/dev/null  && $* || chk=1
+
+    if [ -n "$_k_preload_list" ]; then
+        _k_preload_list_arr=($_k_preload_list)
+        for ((i=$((${#_k_preload_list_arr[*]}-1)); i>=0; i--)); do
+           _k_unload ${_k_preload_list_arr[$i]}
+        done
+    fi
+    [ "$chk" == "1" ] && return 1 || return 0
+}
+
+_k_lexec_v3() {
+    #ex : kl <function> <options...>
+    local klib preload _k_preload_list pll _k_preload_list_arr klib_tag chk
+    function=$1
+    klib_tag=$(echo $function | awk -F_ '{if($2=="k") printf "k"}')
+    if [ "$klib_tag" == "k" ]; then
+        klib=$(echo $function | awk -F_ '{print $3;}')
+    else
+        klib=$(echo $function | awk -F_ '{print $1;}')
+    fi
+    if _k_load $klib >/dev/null; then
+        _k_preload $klib >/dev/null && _k_preload_list="$klib $(_k_preload_list $klib)"
+    fi
+
+    #EXEC
+    if [ "$klib_tag" == "k" ]; then
+        _k_list $function >/dev/null  && $* || chk=1
+    else
+        _k_list _k_$function >/dev/null &&  _k_$* || chk=1
+    fi
+
+    if [ -n "$_k_preload_list" ]; then
+        _k_preload_list_arr=($_k_preload_list)
+        for ((i=$((${#_k_preload_list_arr[*]}-1)); i>=0; i--)); do
+           _k_unload ${_k_preload_list_arr[$i]}
+        done
+    fi
+    [ "$chk" == "1" ] && return 1 || return 0
+}
+
+_k_lexec_v4() {
+    local klib preload _k_preload_list pll _k_preload_list_arr klib_tag chk tmp_pid 
+    chk=0
+    function=$1
+    klib_tag=$(echo $function | awk -F_ '{if($2=="k") printf "k"}')
+    if [ "$klib_tag" == "k" ]; then
+        klib=$(echo $function | awk -F_ '{print $3;}')
+    else
+        klib=$(echo $function | awk -F_ '{print $1;}')
+    fi
+
+    tmp_pid=$(mktemp /tmp/${FUNCNAME}-XXXXXXXXX)
+    _k_preload $klib > $tmp_pid && _k_preload_list=$(cat $tmp_pid)
+    rm -f $tmp_pid
+
+    #EXEC
+    if [ "$klib_tag" == "k" ]; then
+        if _k_list $function >/dev/null; then
+            $* 
+            chk=$?
+        else
+            chk=$_K_ICODE_LEXEC
+        fi
+    else
+        if _k_list _k_$function >/dev/null; then
+            _k_$* 
+            chk=$?
+        else
+            chk=$_K_ICODE_LEXEC
+        fi
+    fi
+
+    _k_unpreload "$_k_preload_list"
+    return $chk
+}
+
+_k_lexec_v5() {
+    local klib preload _k_preload_list pll _k_preload_list_arr klib_tag chk tmp_pid argv
+    argv=($*)
+    if echo ${argv[0]} | grep "_" >/dev/null; then
+        klib=$(echo ${argv[0]} | awk -F_ '{if($2=="k") print $3; else print $1;}')
+        function=$(echo ${argv[0]} | grep "^_" >/dev/null && echo ${argv[0]} || echo "_k_${argv[0]}")
+        argv[0]=$function
+    else
+        klib=${argv[0]}
+        function=${argv[1]}
+        argv[0]=""
+    fi
+
+    tmp_pid=$(mktemp /tmp/${FUNCNAME}-XXXXXXXXX)
+    _k_preload $klib > $tmp_pid && _k_preload_list=$(cat $tmp_pid)
+    rm -f $tmp_pid
+
+    #EXEC
+    if _k_list $function >/dev/null; then
+        ${argv[*]}
+        chk=$?
+    else
+        chk=$_K_ICODE_LEXEC
+    fi
+
+    _k_unload "$_k_preload_list"
+#    _k_unpreload "$_k_preload_list"
+    return $chk
+}
+
+_k_lexec() {
+    local help
+    help="excute function in an library with lib name
+Usage) ${FUNCNAME} <lib name> <function> <options...>"
+    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    _k_lexec_v2 $* && return 0 || return 1
+}
+
+_k_lexec2() {
+    local help
+    help="excute function in an library without lib name. because function name has lib name (almost)
+Usage) ${FUNCNAME} <function> <options...>"
+    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    _k_lexec_v5 $* 
+    return $?
+}
+
+#_k_lexec_new() {
+#    #ex : _k_lexec <lib name> <function> <options...>
+#    local lib loaded
+#    lib=$1
+#    shift 1
+#    if ! echo $_k_lib_list | sed "s/ /\n/g" | grep -v "^${lib}$" ; then
+#        _k_load $lib && loaded=1
+#
+#    fi
+#
+#    #EXEC
+#    $@
+#    [ "$loaded" == "1" ]  && _k_unload $lib s
+#}
+
+
+_k_list_v1() {
+  local cmd list
+  cmd=$1
+  #typeset -f | awk '/ \(\) $/ && !/^main / {print $1}'
+  #typeset -f | grep "^_k_" | awk '{print $1}'
+  #declare -F -p | cut -d " " -f 3 | grep "^_k_"
+  if [ -n "$cmd" ]; then
+      #declare -F -p | cut -d " " -f 3 | grep "^_k" | grep -v "^_k_loaded_" | grep -w "^$cmd$" >/dev/null && return 0 || return 1
+      declare -F $cmd >/dev/null && return 0 || return 1
+  else
+      #declare -F -p | cut -d " " -f 3 | grep "^_k" | grep -v "^_k_loaded_"
+      for list in $(declare -F -p | cut -d " " -f 3 | grep "^_k" | grep -v "^_k_loaded_" | grep -v "_help$"); do
+           echo "$list : $(declare -f $list | grep "^[ ]*help=" | awk -F\" '{print $2}')"
+      done
+  fi
+}
+
+_k_list() {
+  # do not make a subload for only "_k_list function"
+  local cmd list help
+  help="show all function list, check loaded function name(return BOOL) 
+Usage) ${FUNCNAME} [<function name>]"
+  [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+  cmd=$1
+  if [ -n "$cmd" ]; then
+      declare -F $cmd >/dev/null && return 0 || return 1
+  else
+      for list in $(declare -F -p | cut -d " " -f 3 | grep "^_k" | grep -v -e "^_k_loaded_" -e "_help$" -e "_v[1-9]$" -e "_old$"); do
+           #echo "$list : $(declare -f $list | grep "^[ ]*help=" | awk -F\" '{print $2}')"
+           printf "%s\t" "$list"
+      done
+  fi
+  echo
+  return 0
+}
+
+
+
+_k_list_lib() {
+  local lib help
+  help="show[check] library list
+Usage) ${FUNCNAME} [<lib name>]"
+  [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+  lib=$1
+  if [ -n "$lib" ]; then
+      #declare -F -p | cut -d " " -f 3 | grep "^_k_loaded_" | sed "s#^_k_loaded_##g" | grep -w "^$lib$" >/dev/null && return 0 || return 1
+      declare -F _k_loaded_${lib} >/dev/null && return 0 || return 1
+  else
+      declare -F -p | cut -d " " -f 3 | grep "^_k_loaded_" | sed "s#^_k_loaded_##g"
+  fi
+}
+
+_k_libs() {
+   local help
+   help="same as _k_list_lib, re-define function name"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   _k_list_lib $*
+}
+
+_k_list_function_v1() {
+  local ln  lib_name function
+  lib_name=$1
+  function=$2
+  if [ -n "$lib_name" ]; then
+    if [ -n "$function" ]; then
+        grep "^_k_" $_K_LIB/${_K_XCODE_TAG}${lib_name}.so | awk '/ \(\)\{$/ || / \(\) \{$/ || /\(\)\{$/ || /\(\) \{$/ || /\(\) $/ {print $1 }' | sed "s/(){//g" | sed "s/()//g" | sed "s/{//g" | sed "s/()//g" | grep -w "^$function$" >/dev/null && return 0 || return 1
+    else
+        grep "^_k_" $_K_LIB/${_K_XCODE_TAG}${lib_name}.so | awk '/ \(\)\{$/ || / \(\) \{$/ || /\(\)\{$/ || /\(\) \{$/ || /\(\) $/ {print $1 }' | sed "s/(){//g" | sed "s/()//g" | sed "s/{//g" | sed "s/()//g" | sort
+    fi
+  else
+    echo "<lib name>"
+  fi
+}
+
+_k_list_function_v2() {
+  local ln  lib_name function lib
+  lib_name=$1
+  function=$2
+  if [ -n "$lib_name" ]; then
+    lib=$(_k_check_lib $lib_name) || error_return "$lib_name not found" || return 1
+    if [ -n "$function" ]; then
+        grep "^_k_" $lib |  grep -v "{name}" | awk '/ \(\)\{$/ || / \(\) \{$/ || /\(\)\{$/ || /\(\) \{$/ || /\(\) $/ {print $1 }' | sed -e "s/(){//g" -e "s/()//g" -e "s/{//g" -e "s/()//g" | grep -w "^$function$" >/dev/null && return 0 || return 1
+    else
+        grep "^_k_" $lib | grep -v "{name}" | awk '/ \(\)\{$/ || / \(\) \{$/ || /\(\)\{$/ || /\(\) \{$/ || /\(\) $/ {print $1 }' | sed -e "s/(){//g" -e "s/()//g" -e "s/{//g" -e "s/()//g" | grep -v "_k_loaded_" | sort
+    fi
+  else
+    error_return $help || return 1
+  fi
+}
+
+_k_list_function_v3() {
+  local ln  lib_name function lib
+  lib_name=$1
+  function=$2
+  [ -n "$lib_name" ] || error_return "${FUNCNAME} <lib name> [<funct. name>]" || return 1
+  lib=$(_k_check_lib $lib_name) || error_return "$lib_name not found" || return 1
+  if [ -n "$function" ]; then
+        grep "^_k_" $lib |  grep -v "{name}" | awk '/ \(\)\{$/ || / \(\) \{$/ || /\(\)\{$/ || /\(\) \{$/ || /\(\) $/ {print $1 }' | sed -e "s/(){//g" -e "s/()//g" -e "s/{//g" -e "s/()//g" | grep -w "^$function$" >/dev/null && return 0 || return 1
+  else
+        grep "^_k_" $lib | awk '/ \(\)\{$/ || / \(\) \{$/ || /\(\)\{$/ || /\(\) \{$/ || /\(\) $/ {print $1 }' | sed -e "s/(){//g" -e "s/()//g" -e "s/{//g" | sort
+  fi
+  return 0
+}
+
+_k_list_function_v4() {
+  local ln  lib_name function lib
+  lib_name=$1
+  function=$2
+  opt=$3
+  
+  [ -n "$lib_name" ] || error_return "${FUNCNAME} <lib name> [<funct. name>]" || return 1
+  lib=$(_k_check_lib $lib_name) || error_return "$lib_name not found" || return 1
+  if [ -n "$function" ]; then
+        if [ "$opt" == "-r" ]; then
+            grep "^_k_" $lib |  grep -v "{name}" | awk '/ \(\)\{$/ || / \(\) \{$/ || /\(\)\{$/ || /\(\) \{$/ || /\(\) $/ {print $1 }' | sed -e "s/(){//g" -e "s/()//g" -e "s/{//g" -e "s/()//g" | grep "$function" && return 0 || return 1
+        elif [ "$opt" == "-n" ]; then
+            grep "^_k_" $lib |  grep -v "{name}" | awk '/ \(\)\{$/ || / \(\) \{$/ || /\(\)\{$/ || /\(\) \{$/ || /\(\) $/ {print $1 }' | sed -e "s/(){//g" -e "s/()//g" -e "s/{//g" -e "s/()//g" | grep -e "_${function}$" -e "_${function}_" && return 0 || return 1
+        else
+            grep "^_k_" $lib |  grep -v "{name}" | awk '/ \(\)\{$/ || / \(\) \{$/ || /\(\)\{$/ || /\(\) \{$/ || /\(\) $/ {print $1 }' | sed -e "s/(){//g" -e "s/()//g" -e "s/{//g" -e "s/()//g" | grep -w "^$function$" >/dev/null && return 0 || return 1
+        fi
+  else
+        grep "^_k_" $lib | awk '/ \(\)\{$/ || / \(\) \{$/ || /\(\)\{$/ || /\(\) \{$/ || /\(\) $/ {print $1 }' | sed -e "s/(){//g" -e "s/()//g" -e "s/{//g" | grep -v "[$|{|}|%|#|@|&|^|(|)]" | sort
+  fi
+  return 0
+}
+
+_k_list_function_v5() {
+  local input ln  lib_name function lib
+  input=($*)
+  _k_lib_opt "$*" -r >/dev/null && opt="-r"
+  _k_lib_opt "$*" -n >/dev/null && opt="-n"
+  name=( $(_k_lib_opt "$*" -get_name full) ) || error_return "${FUNCNAME} <lib name> [<funct. name>]" || return 1
+  lib_name=${name[0]}
+  function=${name[1]}
+
+  [ -n "$lib_name" ] || error_return "${FUNCNAME} <lib name> [<funct. name>]" || return 1
+  lib=$(_k_check_lib $lib_name) || error_return "$lib_name not found" || return 1
+  if [ -n "$function" ]; then
+        if [ "$opt" == "-r" ]; then
+            grep "^_k_" $lib |  grep -v "{name}" | awk '/ \(\)\{$/ || / \(\) \{$/ || /\(\)\{$/ || /\(\) \{$/ || /\(\) $/ {print $1 }' | sed -e "s/(){//g" -e "s/()//g" -e "s/{//g" -e "s/()//g" | grep "$function" && return 0 || return 1
+        elif [ "$opt" == "-n" ]; then
+            grep "^_k_" $lib |  grep -v "{name}" | awk '/ \(\)\{$/ || / \(\) \{$/ || /\(\)\{$/ || /\(\) \{$/ || /\(\) $/ {print $1 }' | sed -e "s/(){//g" -e "s/()//g" -e "s/{//g" -e "s/()//g" | grep -e "_${function}$" -e "_${function}_" && return 0 || return 1
+        else
+            grep "^_k_" $lib |  grep -v "{name}" | awk '/ \(\)\{$/ || / \(\) \{$/ || /\(\)\{$/ || /\(\) \{$/ || /\(\) $/ {print $1 }' | sed -e "s/(){//g" -e "s/()//g" -e "s/{//g" -e "s/()//g" | grep -w "^$function$" >/dev/null && return 0 || return 1
+        fi
+  else
+        grep "^_k_" $lib | awk '/ \(\)\{$/ || / \(\) \{$/ || /\(\)\{$/ || /\(\) \{$/ || /\(\) $/ {print $1 }' | sed -e "s/(){//g" -e "s/()//g" -e "s/{//g" | grep -v "[$|{|}|%|#|@|&|^|(|)]" | sort
+  fi
+  return 0
+}
+
+_k_list_function_v6() {
+  local input ln  lib_name function lib
+  input=($*)
+  _k_lib_opt "$*" -r >/dev/null && opt="-r"
+  _k_lib_opt "$*" -n >/dev/null && opt="-n"
+  name=( $(_k_lib_opt "$*" -get_name full) ) || error_return "${FUNCNAME} <lib name> [<funct. name>]" || return 1
+  lib_name=${name[0]}
+  function=${name[1]}
+
+  [ -n "$lib_name" ] || error_return "${FUNCNAME} <lib name> [<funct. name>]" || return 1
+  lib=$(_k_check_lib $lib_name) || error_return "$lib_name not found" || return 1
+  if [ -n "$function" ]; then
+        if [ "$opt" == "-r" ]; then
+            grep "()" $lib | grep -v "^#" | grep "{" | grep -v "^[a-zA-Z][:space:][a-zA-Z]" | awk -F\( '{print $1}' |grep -v "[$|{|}|%|#|@|!|&|*|^]" | grep "$function" && return 0 || return 1
+        elif [ "$opt" == "-n" ]; then
+            grep "()" $lib | grep -v "^#" | grep "{" | grep -v "^[a-zA-Z][:space:][a-zA-Z]" | awk -F\( '{print $1}' |grep -v "[$|{|}|%|#|@|!|&|*|^]" | grep -e "_$function" -e "_${function}_" && return 0 || return 1
+        else
+            grep "()" $lib | grep -v "^#" | grep "{" | grep -v "^[a-zA-Z][:space:][a-zA-Z]" | awk -F\( '{print $1}' |grep -v "[$|{|}|%|#|@|!|&|*|^]" | grep "^${function}$" && return 0 || return 1
+        fi
+  else
+        grep "()" $lib | grep -v "^#" | grep "{" | grep -v "^[a-zA-Z][:space:][a-zA-Z]" | awk -F\( '{print $1}' |grep -v "[$|{|}|%|#|@|!|&|*|^|\"]" | sort
+  fi
+  return 0
+}
+
+
+_k_list_function_v7() {
+  local input ln  lib_name function lib
+  input=($*)
+  _k_lib_opt "$*" -r >/dev/null && opt="-r"
+  _k_lib_opt "$*" -n >/dev/null && opt="-n"
+  name=( $(_k_lib_opt "$*" -get_name full) ) || error_return "${FUNCNAME} <lib name> [<funct. name>]" || return 1
+  if (( ${#name[*]} == 2 )); then
+      lib_name=${name[0]}
+      function=$(_k_function_name $lib_name ${name[1]})
+  else
+      lib_name=$(_k_lib_name ${name[0]})
+      echo ${name[0]} | grep "_" >/dev/null && function=$(_k_function_name ${name[0]})
+  fi
+
+  [ -n "$lib_name" ] || error_return "${FUNCNAME} <lib name> [<funct. name>]" || return 1
+  lib=$(_k_check_lib $lib_name) || error_return "$lib_name not found" || return 1
+  if [ -n "$function" ]; then
+        if [ "$opt" == "-r" ]; then
+            grep "()" $lib | grep -v "^#" | grep "{" | grep -v "^[a-zA-Z][[:space:]][a-zA-Z]" | awk -F\( '{print $1}' |grep -v "[$|{|}|%|#|@|!|&|*|^]" | grep "$function" && return 0 || return 1
+        elif [ "$opt" == "-n" ]; then
+            grep "()" $lib | grep -v "^#" | grep "{" | grep -v "^[a-zA-Z][[:space:]][a-zA-Z]" | awk -F\( '{print $1}' |grep -v "[$|{|}|%|#|@|!|&|*|^]" | grep -e "_$function" -e "_${function}_" && return 0 || return 1
+        else
+            grep "()" $lib | grep -v "^#" | grep "{" | grep -v "^[a-zA-Z][[:space:]][a-zA-Z]" | awk -F\( '{print $1}' |grep -v "[$|{|}|%|#|@|!|&|*|^]" | grep "^${function}$" && return 0 || return 1
+        fi
+  else
+        grep "()" $lib | grep -v "^#" | grep "{" | grep -v "^[a-zA-Z][[:space:]][a-zA-Z]" | awk -F\( '{print $1}' |grep -v "[$|{|}|%|#|@|!|&|*|^|\"]" | sort
+  fi
+  return 0
+}
+
+_k_list_function() {
+  local help
+  help="show function list in the library
+Usage) ${FUNCNAME} <lib name>"
+  [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   _k_list_function_v7 $* && return 0 || return 1
+}
+
+_k_function_detail() {
+   local function
+   help="show whole function's strings
+Usage) ${FUNCNAME} <function>"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   function=$1
+   #[ -n "$function" ] && declare -f $function || error_return $help || return 1
+   [ -n "$function" ] && declare -f $function || error_return "$function not found" || return 1
+}
+
+_k_avail_old() {
+  local ln 
+  for ln in  $(ls $_K_LIB/${_K_XCODE_TAG}*.so); do
+       echo -n "$(basename $ln | sed -e 's/^k//g' -e 's/\.so$//g') "
+  done
+  echo
+}
+
+_k_avail_v2() {
+  local ln klib
+  for ln in  $(ls $_K_LIB/${_K_XCODE_TAG}*.so); do
+       klib=$(basename $ln | sed -e 's/^k//g' -e 's/\.so$//g')
+       _k_list_function $klib _k_${klib}_help && echo "$klib : $(_k_list_lib $klib && _k_${klib}_help || _k_lexec $klib _k_${klib}_help)"  || echo $klib
+  done
+  echo
+}
+
+_k_avail_v3() {
+  local ln klib 
+  #for lib_dir in $(echo $_K_LIB | sed "s/:/ /g"); do
+  for lib_dir in $(_k_get_path $_K_LIB); do
+    for ln in  $(ls $lib_dir/${_K_XCODE_TAG}*.so 2>/dev/null); do
+       klib=$(basename $ln | sed -e 's/^k//g' -e 's/\.so$//g')
+       _k_list_function $klib _k_${klib}_help && echo "$klib : $(_k_list_lib $klib && _k_${klib}_help || _k_lexec $klib _k_${klib}_help)"  || echo $klib
+    done
+  done
+  echo
+}
+
+_k_avail_v4() {
+  local ln klib opt
+  opt=$1
+  #for lib_dir in $(echo $_K_LIB | sed "s/:/ /g"); do
+  for lib_dir in $(_k_get_path $_K_LIB); do
+    [ -d $lib_dir ] && cd $lib_dir || continue
+    for ln in  ${_K_XCODE_TAG}*.so ; do
+       klib=$(basename $ln | sed -e 's/^k//g' -e 's/\.so$//g')
+       [ "$klib" == "*" ] && continue
+       if [ "$opt" == "help" ]; then
+           _k_list_function $klib _k_${klib}_help && echo "$klib : $(_k_list_lib $klib && _k_${klib}_help || _k_lexec $klib _k_${klib}_help)"  || echo $klib
+       else
+           printf "%s\t" "$klib"
+       fi
+    done
+    cd - >/dev/null
+  done
+  echo
+}
+
+_k_avail() {
+  local help
+  help="show availalbe library list in defined _K_LIB
+Usage) ${FUNCNAME} [help]"
+  [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   _k_avail_v4 $*
+}
+
+_k_find_function_v1() {
+  local func_name
+  func_name=$1
+  if [ -n "$func_name" ]; then 
+    for libname in $( _k_avail ); do
+        _k_list_function $libname | grep -w $func_name >& /dev/null && echo "Filename : $_K_LIB/k${libname}.so"
+    done
+    typeset -f $func_name 
+  else 
+    echo "<function name>"
+  fi
+}
+
+_k_find_function_v2() {
+  local func_name help
+  func_name=$1
+  if [ -n "$func_name" ]; then
+    for libname in $( _k_avail ); do
+        if _k_list_function $libname $func_name > /dev/null; then
+             lib=$(_k_check_lib $libname)
+             echo "Filename : $lib"
+             typeset -f $func_name 2>/dev/null
+             return 0
+        fi
+    done
+  else
+    error_return $help || return 1
+  fi
+}
+
+_k_find_function_v3() {
+  local func_name help
+  func_name=$1
+  if [ -n "$func_name" ]; then
+    for libname in $( _k_avail ); do
+        if _k_list_function $libname $func_name > /dev/null; then
+             echo "Library name : $libname"
+             typeset -f $func_name 2>/dev/null
+             return 0
+        fi
+    done
+  else
+    error_return $help || return 1
+  fi
+}
+
+_k_find_function_v4() {
+  local func_name help find_list
+  func_name=$1
+  opt=$2
+
+  if [ -n "$func_name" ]; then
+    for libname in $( _k_avail ); do
+        if [ "$opt" == "-r" -o "$opt" == "-n" ]; then
+            if find_list=$(_k_list_function $libname $func_name $opt) > /dev/null; then
+                 echo
+                 echo "Library name : $libname"
+                 echo "Function name : " $find_list
+            fi
+        else
+            if _k_list_function $libname $func_name > /dev/null; then
+                 echo "Library name : $libname"
+                 echo "Function name : $func_name"
+                 typeset -f $func_name 2>/dev/null
+                 return 0
+            elif _k_list_function $libname _k_${libname}_$func_name > /dev/null; then
+                 echo "Library name : $libname"
+                 echo "Function name : _k_${libname}_$func_name"
+                 typeset -f _k_${libname}_$func_name 2>/dev/null
+                 return 0
+            elif _k_list_function $libname _k_$func_name  > /dev/null; then
+                 echo "Library name : $libname"
+                 echo "Function name : _k_$func_name"
+                 typeset -f _k_$func_name 2>/dev/null
+                 return 0
+            fi
+        fi
+    done
+  else
+    error_return $help || return 1
+  fi
+}
+
+_k_find_function() {
+  local help
+  help="find library file included the function
+Usage) ${FUNCNAME} <function name>  [<opt>]
+      : default (null) : exactly word ( _k_<lib>_<function> or <lib>_<function> or <function> )
+   -r : Roughly string ( string<word>string )
+   -n : Roughly exact word ( _<word> or _<word>_ )
+   "
+  [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   _k_find_function_v4 $* 
+   return $?
+}
+
+_k_version_v1() {
+  local name
+  name=$1
+  if [ -n "$name" ] ;then
+     if [ -f $_K_LIB/${_K_XCODE_TAG}${name}.so ]; then
+         echo "$(head -n 10 $_K_LIB/${_K_XCODE_TAG}${name}.so | grep "^#\$lib_ver\$:" | awk -F: '{print $2}')" 
+         return 0
+     fi
+  else
+     echo "_k_version <lib name>"
+  fi
+  return 1
+}
+
+_k_version_v2() {
+  local name
+  name=$1
+  if [ -n "$name" ] ;then
+     lib=$(_k_check_lib $name) || error_return "$name not found" || return 1
+     echo "$(head -n 10 $lib | grep "^#\$lib_ver\$:" | awk -F: '{print $2}')"
+     return 0
+  else
+     error_return $help
+  fi
+  return 1
+}
+
+_k_version() {
+  local help
+  help="show library's version
+Usage) ${FUNCNAME} <lib name>"
+  [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   _k_version_v2 $*
+}
+
+_k_revcp() {
+  local help="make revision file
+Usage) ${FUNCNAME} <file name> [<version level(2,1,0)> <opt(-c)>]
+       opt : -c (copy, default(null): link)
+
+       version level : default 0 level)
+         <filename>.f.m.l
+
+         2: f level
+         1: m level
+         0: l level"
+
+  [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+  local filename v1 v2 v3 opt new_filename
+  filename=$1
+  v1=$2
+  v2=$3
+  v3=$4
+  opt=$5
+  [ -n "$filename" ] || error_exit "input not found"
+  [ -f $filename ] || error_exit "$filename not found"
+  old_ver=$( head -n 10 $filename | grep "^#\$lib_ver\$:" | awk -F: '{print $2}' | sed "s/ //g")
+  [ -n "$old_ver" ] || error_exit "old version not found in $filename"
+  new_ver=${v1}.${v2}.${v3}
+
+  echo ">> $old_ver => $new_ver <<"
+  #sleep 1
+  new_filename=$(echo ${filename} | sed "s/~$//g")
+
+  #cat ${filename} | sed -e s/\#\$lib_ver\$\:${old_ver}/\#\$lib_ver\$\:${new_ver}/g > ${filename}.${v1}.${v2}.${v3}
+  cat ${filename} | sed -e s/\#\$lib_ver\$\:${old_ver}/\#\$lib_ver\$\:${new_ver}/g > ${new_filename}.${v1}.${v2}.${v3}
+  chmod 644 $new_filename.${v1}.${v2}.${v3}
+  cd $(dirname $new_filename)
+  if [ "$opt" == "-c" ]; then
+     [ -L $(basename $new_filename) ] && rm -f $(basename $new_filename)
+     \cp -fa $(basename $new_filename.${v1}.${v2}.${v3}) $(basename $new_filename)
+  else
+     ln -sf $(basename $new_filename.${v1}.${v2}.${v3}) $(basename $new_filename)
+  fi
+  cd - > /dev/null 2>&1
+}
+
+_k_rev_v1() {
+  local filename version _m _l vl opt
+  _m=10
+  _l=99
+
+  filename=$1
+  vl=$2
+  opt=$3
+  [ -f $filename ] || error_exit "File not found ($filename)"
+  [ ! -n "$vl" -o "$vl" == "null" ] && vl=0
+
+  if (( $# > 4 && $# < 1  || $vl > 2 )); then
+    echo "
+    $(basename $0) <file name> [<version level(2,1,0)> <opt(-c)>]
+       opt : -c (copy, default(null): link)
+
+       version level : default 0 level)
+         <filename>.f.m.l
+
+         2: f level
+         1: m level
+         0: l level
+    "
+    return 1
+  fi
+
+
+
+  old_ver=$( head -n 10 $filename | grep "^#\$lib_ver\$:" | awk -F: '{print $2}' | sed "s/ //g")
+  if [ -n "$old_ver" ]; then
+     #[ -f ${filename}.${old_ver} ] || cp ${filename} ${filename}.${old_ver}
+     [ -f $(echo ${filename} | sed "s/~$//g").${old_ver} ] || cp ${filename} $(echo ${filename} | sed "s/~$//g").${old_ver}
+  else
+     old_ver="0.0.1"
+     sed "1 a\
+#$lib_ver$:$old_ver" $filename > ${filename}~
+     mv ${filename}~ ${filename}
+     #cp ${filename} ${filename}.${old_ver}
+     cp ${filename} $(echo ${filename} | sed "s/~$//g").${old_ver}
+  fi
+
+  fml=($(echo $old_ver | sed "s/\./ /g"))
+  if [ "$vl" == "2" ]; then
+    _k_revcp $filename $((${fml[0]}+1)) 0 0 $opt
+  elif [ "$vl" == "1" ]; then
+    _k_revcp $filename ${fml[0]} $((${fml[1]}+1)) 0 $opt
+  elif [ "$vl" == "0" ]; then
+    _k_revcp $filename ${fml[0]} ${fml[1]} $((${fml[2]}+1)) $opt
+  fi
+}
+
+_k_rev() {
+  local help="make a revision file
+Usage) ${FUNCNAME} <file name> [<version level(2,1,0)> <opt(-c)>]
+       opt : -c (copy, default(null): link)
+
+       version level : default 0 level)
+         <filename>.f.m.l
+
+         2: f level
+         1: m level
+         0: l level"
+
+  [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+  local filename version vl opt
+  filename=$1
+  vl=$2
+  opt=$3
+  [ -f $filename ] || error_exit "File not found ($filename)"
+  [ ! -n "$vl" -o "$vl" == "null" ] && vl=0
+
+  if (( $# > 4 && $# < 1  || $vl > 2 )); then
+    echo "$help"
+    return 1
+  fi
+
+
+
+  old_ver=$( head -n 10 $filename | grep "^#\$lib_ver\$:" | awk -F: '{print $2}' | sed "s/ //g")
+  if [ -n "$old_ver" ]; then
+     [ -f $(echo ${filename} | sed "s/~$//g").${old_ver} ] || \cp ${filename} $(echo ${filename} | sed "s/~$//g").${old_ver}
+
+     fml=($(echo $old_ver | sed "s/\./ /g"))
+     if [ "$vl" == "2" ]; then
+       _k_revcp $filename $((${fml[0]}+1)) 0 0 $opt
+     elif [ "$vl" == "1" ]; then
+       _k_revcp $filename ${fml[0]} $((${fml[1]}+1)) 0 $opt
+     elif [ "$vl" == "0" ]; then
+       _k_revcp $filename ${fml[0]} ${fml[1]} $((${fml[2]}+1)) $opt
+     fi
+  else
+     \cp ${filename} $(echo ${filename} | sed "s/~$//g")
+  fi
+}
+
+
+_k_vi_v1() {
+  local name lib_name opt ver
+  if [ "$1" == "-c" ]; then
+    opt="-c"
+    shift 1
+  fi
+  name=$1
+  #shift 1
+  ver=$2
+
+  if [ -n "$name" ]; then
+     if [ -f $_K_LIB/${_K_XCODE_TAG}${name}.so ]; then
+         #_k_rev $_K_LIB/${_K_XCODE_TAG}${name}.so $*
+         _k_rev $_K_LIB/${_K_XCODE_TAG}${name}.so "$ver" "$opt"
+         vi $_K_LIB/${_K_XCODE_TAG}${name}.so
+     elif [ -f $_K_LIB/${name} ]; then
+         #_k_rev $_K_LIB/${name} $*
+         _k_rev $_K_LIB/${name} "$ver" "$opt"
+         vi $_K_LIB/${name}
+     elif [ -f ${name} ]; then
+         lib_name=$(echo $(basename $name) | sed -e "s/^${_K_XCODE_TAG}//g" -e "s/.so$//g" -e "s/ //g")
+         old_version=$(_k_version $lib_name)
+         if [ -n "$old_version" ]; then
+            echo "old version $old_version"
+            sleep 1
+            _k_rev ${name} "$ver" "$opt"
+         fi
+         vi ${name}
+     else
+         echo "${name} not found"
+     fi
+  else
+     echo "_k_vi [ <opt(-c)> ] <lib name> [<f(2)|m(1)|l(0)|default(null)>]"
+  fi
+}
+
+#New vim
+_k_vi_v2() {
+  local name lib_name opt ver
+  if [ "$1" == "-l" ]; then
+    opt=""
+    shift 1
+  else
+    opt="-c"
+  fi
+  name=$1
+  ver=$2
+
+  if [ -n "$name" ]; then
+     if [ -f $_K_LIB/${_K_XCODE_TAG}${name}.so ]; then
+         \cp -f $_K_LIB/${_K_XCODE_TAG}${name}.so $_K_LIB/${_K_XCODE_TAG}${name}.so~
+         vi $_K_LIB/${_K_XCODE_TAG}${name}.so~
+         if ! cmp $_K_LIB/${_K_XCODE_TAG}${name}.so $_K_LIB/${_K_XCODE_TAG}${name}.so~ >/dev/null; then
+             _k_rev $_K_LIB/${_K_XCODE_TAG}${name}.so~ "$ver" "$opt"
+         fi
+     elif [ -f $_K_LIB/${name} ]; then
+         \cp -f $_K_LIB/${name} $_K_LIB/${name}~
+         vi $_K_LIB/${name}~
+         if ! cmp $_K_LIB/${name} $_K_LIB/${name}~ >/dev/null; then
+             _k_rev $_K_LIB/${name}~ "$ver" "$opt"
+         fi
+     elif [ -f ${name} ]; then
+         \cp -f ${name} ${name}~
+         vi ${name}~
+         if ! cmp ${name} ${name}~ >/dev/null; then
+             lib_name=$(echo $(basename ${name}~) | sed -e "s/^${_K_XCODE_TAG}//g" -e "s/.so~$//g" -e "s/ //g")
+             old_version=$(_k_version $lib_name)
+             if [ -n "$old_version" ]; then
+                echo "old version $old_version"
+                sleep 1
+                _k_rev ${name}~ "$ver" "$opt"
+             fi
+         fi
+     else
+         echo "${name} not found"
+     fi
+  else
+     echo "_k_vi [ <opt(-l)> ] <lib name> [<f(2)|m(1)|l(0)|default(null)>]
+    -l : make a link file from file to version file
+"
+  fi
+}
+
+_k_vi_v3() {
+  local name lib_name opt ver
+   
+  if [ "$1" == "-l" ]; then
+    opt=""
+    shift 1
+  else
+    opt="-c"
+  fi
+  name=$1
+  ver=$2
+
+  if [ -n "$name" ]; then
+     if lib=$(_k_check_lib $name); then
+         \cp -f $lib ${lib}~
+         vi ${lib}~
+         cmp $lib ${lib}~ >/dev/null ||  _k_rev ${lib}~ "$ver" "$opt"
+     elif [ -f $name ]; then
+         \cp -a $name ${name}~
+         vi ${name}~
+         cmp ${name} ${name}~ >/dev/null ||  _k_rev ${name}~  "$ver" "$opt"
+     else
+         echo "${name} not found"
+     fi
+  else
+     error_return $help || return 1
+  fi
+}
+
+_k_vi_v4() {
+  local name lib_name opt ver vi_ver vimrc
+
+  if [ "$1" == "-l" ]; then
+    opt=""
+    shift 1
+  elif [ "$1" == "-v" ]; then
+    opt=""
+    vi_ver=$2
+    shift 2
+  else
+    opt="-c"
+  fi
+  name=$1
+  ver=$2
+  if [ -n "$_K_HOME" ]; then
+      vimrc="-u $_K_ETC/vimrc"
+      if [ "$(uname -s)" == "Darwin" ]; then
+          vimrc="$vimrc -u $_K_ETC/vimrc.osx"
+      else
+          vimrc="$vimrc -u $_K_ETC/vimrc.linux"
+      fi
+  fi
+
+  if [ -n "$name" ]; then
+     if lib=$(_k_check_lib $name); then
+         [ -n "$vi_ver" ] && \cp -f $lib.${vi_ver} ${lib}~ || \cp -f $lib ${lib}~
+         [ -f $(dirname ${lib}~)/.$(basename ${lib}~).swp ] && _k_ask "Remove $(dirname ${lib}~)/.$(basename ${lib}~).swp (y/n)? " && rm -f $(dirname ${lib}~)/.$(basename ${lib}~).swp
+         vi $vimrc ${lib}~
+         if [ -n "$vi_ver" ]; then
+              cmp $lib.${vi_ver} ${lib}~ >/dev/null ||  _k_rev ${lib}~ "$ver" "$opt"
+         else
+              cmp $lib ${lib}~ >/dev/null ||  _k_rev ${lib}~ "$ver" "$opt"
+         fi
+     elif [ -f $name ]; then
+         \cp -a $name ${name}~
+         [ -f $(dirname ${name}~)/.$(basename ${name}~).swp ] && _k_ask "Remove $(dirname ${name}~)/.$(basename ${name}~).swp (y/n)? " && rm -f $(dirname ${name}~)/.$(basename ${name}~).swp
+         vi $vimrc ${name}~
+         cmp ${name} ${name}~ >/dev/null ||  _k_rev ${name}~  "$ver" "$opt"
+     else
+         vi $vimrc ${name}
+     fi
+  else
+     error_return $help || return 1
+  fi
+}
+
+_k_vi() {
+  local help="
+Klibrary's vi
+Usage) ${FUNCNAME} [ <opt> ] <lib name> [<f(2)|m(1)|l(0)|default(null)>] 
+
+<opt>
+  -c : make a file from version file (default:null)
+  -l : make a link file from version file
+  -v <version> : vi <lib name>.<version> file
+"
+  [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   _k_vi_v4 $*
+}
+
+_k_path_lib() {
+  local help="Show library path
+Usage) ${FUNCNAME}"
+  [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+  if [ ! -n "$_K_LIB" ]; then
+     echo "_K_LIB not found"
+     return 1
+  fi
+  echo $_K_LIB
+}
+
+_k_path_home() {
+  local help="Show home path
+Usage) ${FUNCNAME}"
+  [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+  if [ ! -n "$_K_HOME" ]; then
+     echo "_K_HOME not found"
+     return 1
+  fi
+  echo $_K_HOME
+}
+
+_k_go() {
+  local help="change to defined path
+Usage) ${FUNCNAME} <name>
+  lib : library
+  home : home"
+  [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+  local k_go_path
+  if [ "$1" == "lib" ]; then
+      k_go_path=$(_k_path_lib) || return 1
+  elif [ "$1" == "home" ]; then
+      k_go_path=$(_k_path_home) || return 1
+  elif [ "$1" == "ad" ]; then
+      k_go_path=$(_k_lexec2 _k_ad_home) || return 1
+  fi
+  [ -n "$k_go_path" ] && cd $(echo ${k_go_path} | awk -F: '{print $1}') 2>/dev/null || echo "$1 not found"
+}
+
+_k_status() {
+  echo $?
+}
+
+_k_create() {
+  local help="create library
+Usage) ${FUNCNAME} <lib name>"
+  [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+  local name lib lib_path
+  name=$1
+  lib_path=( $(echo $_K_LIB | sed "s/:/ /g") )
+  if [ $# -ne 1 ]; then
+      error_return "$help" || return 1
+  fi
+   
+  lib=$(_k_check_lib $name) 
+  if [ -n "$lib" ]; then
+
+     error_return "exist ${name} library" || return 1
+
+  else
+
+     echo "#Kage Library  - $name
+#\$lib_ver$:0.0.1
+
+_k_loaded_${name}(){
+   local null
+}
+
+_k_${name}_help() {
+    local help=\"Library ${name}'s  help
+Usage) \${FUNCNAME} \"
+    [  \"\${FUNCNAME}_\${_K_XCODE_HELP}\" == \"\$1\" ] && _k_help  && return 0
+    echo \"Library : ${name} \"
+}
+
+
+_k_${name}(){
+    [ -n \"\$_K_LIB\" ] || error_return \"_K_LIB not found\" || return 1
+    local help=\"Library ${name}'s start function
+Usage) \${FUNCNAME} \"
+    [  \"\${FUNCNAME}_\${_K_XCODE_HELP}\" == \"\$1\" ] && _k_help  && return 0
+    ### start(open) library code here ###
+}
+
+
+#_k_${name}_close(){
+#    local help=\" Library ${name}'s closing function
+#Usage) \${FUNCNAME} \"
+#    [  \"\${FUNCNAME}_\${_K_XCODE_HELP}\" == \"\$1\" ] && _k_help  && return 0
+#    ### close library code here ###
+#}
+
+
+#_k_${name}_example(){
+#    local help=\"help
+#Usage) \${FUNCNAME} \"
+#    [  \"\${FUNCNAME}_\${_K_XCODE_HELP}\" == \"\$1\" ] && _k_help  && return 0
+#    ### your code here ###
+#}
+
+     " > ${lib_path[0]}/${_K_XCODE_TAG}${name}.so
+     [ -f ${lib_path[0]}/${_K_XCODE_TAG}${name}.so ] && echo "created $name library" || echo "fail creating $name library"
+  fi
+}
+
+
+k_v1() {
+   local cmd cmd2 klib preload _k_preload_list pll _k_preload_list_arr klib_tag
+   cmd=( $* )
+   cmd2=${cmd[0]}
+   if _k_list _k_${cmd[0]} >/dev/null ; then
+       cmd[0]=""
+       _k_$cmd2 ${cmd[*]} && return 0 || return 1
+   elif [ -f $_K_BIN/kc_$cmd ]; then
+       shift 1
+       sh $_K_BIN/kc_$cmd $* && return 0 || return 1
+   elif  ! _k_lexec2 ${cmd[*]} ; then
+       ${cmd[*]} && return 0 || return 1
+   fi
+}
+
+k() {
+   local help="Execute KLibrary's function
+Usage) ${FUNCNAME} <command> [<cmd's options> ...]"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   local cmd cmd2 klib preload _k_preload_list pll _k_preload_list_arr klib_tag output chk function_name kc_bin
+   cmd=( $* )
+   cmd2=${cmd[0]}
+#   lib_name=$(_k_lib_name $cmd2) ||
+   function_name=$(_k_function_name $cmd2)
+   if _k_list $function_name >/dev/null ; then
+       cmd[0]=""
+       $function_name ${cmd[*]}
+       chk=$?
+       return $chk
+   #elif [ -f $_K_BIN/kc_$cmd ]; then
+   #    shift 1
+   #    sh $_K_BIN/kc_$cmd $* && return 0 || return 1
+   elif kc_bin=$(_k_find_file kc_$cmd $_K_BIN) ; then 
+       shift 1
+       sh $kc_bin $* && return 0 || return 1
+   else
+      _k_lexec2 ${cmd[*]}
+      chk=$?
+      if [ "$chk" == "0" -o "$chk" == "1" ]; then
+         return $chk
+      elif (( $chk < $_K_ICODE_END )); then
+         ${cmd[*]} && return 0 || return 1
+      fi
+   fi
+}
+
+
+_k_man_v1() {
+   local cmd cmd2 klib preload _k_preload_list pll _k_preload_list_arr klib_tag output chk  man_bin
+   man_bin=$(which man)
+   klib=$1
+   _k_check_lib $klib >/dev/null
+   chk=$?
+   if [ "$chk" == "0" ] ; then
+       if _k_list_function $klib _k_${klib}_help >/dev/null; then
+           echo "Library $klib:  
+
+$(_k_list_lib $klib && _k_${klib}_help || _k_lexec $klib _k_${klib}_help)
+
+$(_k_list_function $klib)
+"  | less
+       fi
+   else
+       $man_bin $klib
+   fi
+}
+
+_k_man() {
+   local help="Klibrary's man for library
+Usage) ${FUNCNAME} <lib name>"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   local cmd cmd2 klib preload _k_preload_list pll _k_preload_list_arr klib_tag output chk  man_bin kflist man_version
+   
+   man_bin=$(which man 2>/dev/null)
+   klib=$1
+   _k_check_lib $klib >/dev/null
+   chk=$?
+   if [ "$chk" == "0" ]; then
+ 
+        echo "$(
+             _k_list_lib $klib >/dev/null || _k_preload_list=$klib
+             [ -n "$_k_preload_list" ] && _k_load "-n" $klib 
+             echo "## Library [ $klib$(man_version=$(_k_version $klib) && echo " - $man_version") ] ##"
+             _k_list _k_${klib}_help >/dev/null &&  _k_${klib}_help
+             echo
+             echo
+             echo "###################"
+             echo "## Function list ##"
+             for kflist in $(_k_list_function $klib); do
+                 if echo $kflist | grep -v -e "_v*[1-9]$" -e "_old$" -e "^_k_loaded" -e "^d_k" >/dev/null; then
+                     echo
+                     echo "[ $kflist ]"
+                     echo "$(help=""; _k_help $kflist)"
+                 fi
+             done 
+             [ -n "$_k_preload_list" ] && _k_unload "-n" $klib 
+        )" | less
+        return 0
+   eles
+       [ -n "$man_bin" ] && $man_bin $klib
+   fi
+}
+
+_k_lib_name() {
+    local lib
+    lib=$1
+    echo $lib | grep "_" >/dev/null && echo $(echo $1 | awk -F_ '{if($2=="k") print $3; else print $1;}') || echo $lib
+    _k_check_lib $lib >/dev/null && return 0 || return 1
+}
+
+_k_function_name_v1() {
+    echo $1 | grep "^_" >/dev/null && echo $1 || echo "_k_$1"
+}
+
+_k_function_name() {
+    local input
+    input=($*)
+    if (( ${#input[*]} == 1 )); then
+       echo $1 | grep "^_k_" >/dev/null && echo $1 || echo "_k_$1"
+    elif (( ${#input[*]} == 2 )); then
+       echo _k_${input[0]}_${input[1]}
+    else
+       return 1
+    fi
+    return 0
+}
+
+_k_help_v1() {
+   local help input
+   input=($1)
+   help="${FUNCNAME} : help help help"
+   if [ "${FUNCNAME}" == "_k_$1" ]; then
+       echo "    $help"
+       return 0
+   fi
+
+   #if ! declare -F $(echo $* | awk '{print $1;}') >/dev/null; then
+   if (( ${#input[*]} > 1 )); then
+       echo "    ${input[*]}"
+       return 0
+   fi
+
+   echo "$input :"
+   $input ${input}_help
+   return 0
+}
+
+_k_help_v2() {
+#  _k_help $1 && return 0
+
+   input=$1
+
+   if [ "${FUNCNAME}" == "_k_$1" ]; then
+       help="${FUNCNAME} : help help help"
+       echo "    $help"
+       return 0
+   elif [ "$1" == "help" -a "$help" ]; then
+       echo "    ${help}"
+       return 0
+   fi
+   return 1
+}
+
+_k_help() {
+   local input func lib libp preload_list chk  temp _k_preload_list 
+#  local help="help
+#Usage)  ${FUNCNAME} "
+#  [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+
+   input=$1
+
+   if [ "${FUNCNAME}" == "_k_$input" -o "${FUNCNAME}" == "$input" ]; then
+       local help="Show help of the input function
+If you want see Library's help then use man command
+
+Usage) ${FUNCNAME} <function name>"
+       echo "$help"
+   elif [ -n "$input" ]; then
+       if chk=$(declare -f $input); then
+           echo "$chk" | grep -w " _k_help "  >/dev/null && $input ${input}_${_K_XCODE_HELP} || return 1
+       else
+           func=$(_k_function_name $input) 
+           lib=$(_k_lib_name $input) 
+           if [ -n "$lib" ]; then
+               if libp=$(_k_check_lib $lib) ; then
+                    _k_list_lib $lib >/dev/null || _k_preload_list=1
+                    [ "$_k_preload_list" == "1" ] && _k_load "-n" $lib
+                    if chk=$(declare -f $func); then
+                       echo "$chk" | grep -w " _k_help "  >/dev/null && $func ${func}_${_K_XCODE_HELP} || chk=1
+                    fi
+                    [ "$_k_preload_list" == "1" ] && _k_unload "-n" $lib
+                    [ "$chk" == "1" ] && return 1
+               else
+                   help $input
+               fi
+           else
+               help $input
+           fi
+       fi
+   elif [ -n "$help" ]; then
+       echo "${help}"
+   fi
+   return 0
+}
+
+_k_env() {
+   local help="Show KLIB's environment
+Usage) ${FUNCNAME}"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   local ii
+   env | grep "^_K_"
+   for ii in $(_k_libs); do
+       declare -f _k_${ii} | grep "^[ ]*_K_" | sed -e "s/;$//g" -e "s/ //g" 
+   done
+}
+
+#############################################################################################
+# Last line in this library
+# for loadding bashrc
+#############################################################################################
+_k_bash_rc() {
+    local BASHRC
+    BASHRC=$1
+    [ "$BASHRC" == "0" ] && return 1
+    if [ "$BASHRC" == "unload" ]; then
+        for bashrc_file in $_K_ETC/bashrc $_K_ETC/$(hostname).bashrc; do
+            if [ -f $bashrc_file ]; then
+                for unset_b in $(cat $bashrc_file  | grep -v "^#"  | grep export | awk -F= '{print $1}' | awk '{print $2}' ); do
+                     unset $unset_b
+                done
+                for unset_b in $(cat $bashrc_file  | grep -v "^#"  | grep "^k load"  | awk '{print $3}' ); do
+                     k unload $unset_b
+                done
+             fi
+        done
+    else
+        if [ -n "$_K_HOME" ]; then
+           [ -f $_K_ETC/bashrc ] && source $_K_ETC/bashrc
+           [ -f $_K_ETC/$(hostname).bashrc ] && source $_K_ETC/$(hostname).bashrc
+        fi
+    fi
+}
+
+_k_bash_rc $BASHRC

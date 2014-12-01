@@ -1,0 +1,227 @@
+#Kage Library
+#$lib_ver$:0.0.42
+#   . $(dirname $0)/klib.so
+#_k_file(){
+#}
+#_k_file_close(){
+#}
+_k_loaded_file(){
+   local null
+}
+
+_k_file_help() {
+   echo "File control library"
+}
+
+_k_file_chk_perm_v1() {
+    local src perm
+    src=$1
+    perm=$2
+    if [ ! -n "$src" -o ! -n "$perm" ]; then
+         echo 2
+         return 2
+    fi
+
+    if [ "$perm" == "$(stat -c %a $src)" ]; then
+         echo 1    #true
+         return 0  #true
+    else
+         echo 0    #false
+         return 1  #false
+    fi
+
+}
+
+_k_file_chk_perm() {
+    local file perm
+    file=$1
+    perm=$2
+    [ ! -n "$file" ] && error_return "${FUNCNAME} <file> [<permission>]" || return 1
+    if [ -n "$perm" ]; then
+        [ "$perm" == "$(stat -c %a $file)" ] && return 0 || return 1
+    else
+        echo $(stat -c %a $file)
+    fi
+}
+
+_k_file_ldd() {
+    local bin root
+    bin=$1
+    root=$2
+    [ ! -z $bin -a -f $bin ] || return 1
+
+    for ldlib in $(ls $root/lib/ld-*.so $root/lib64/ld-*.so 2>/dev/null ); do
+        $ldlib --verify $bin
+        if (( $? == 0 )); then
+           LD_TRACE_LOADED_OBJECTS=1 $bin
+        elif (( $? == 2 )); then
+           LD_TRACE_LOADED_OBJECTS=1 $ldlib $bin
+        fi
+    done
+    return 0
+}
+
+# fine binnary's requirement library files
+# example
+#_k_file_libs null null  /bin/ls /bin/find ...
+_k_file_find_libs() {
+    local lib_path bin
+    root=$1
+    lib_path=$2
+    shift 2
+    [ "$root" == "null" ] && root=
+    [ "$lib_path" == "null" ] && lib_path=
+
+    for bin in $*; do
+       for lib in $(LD_LIBRARY_PATH=$lib_path _k_file_ldd $bin $root); do
+           echo "$lib" | awk -F/ 's = $2 {if(s>0) print}'  && _k_file_find_libs "$lib_path" $lib
+       done
+    done | sort | uniq
+}
+
+
+#new : 08/29/2011
+_k_file_get_filename() {
+  local mapfile name type os version
+  mapfile=$1
+  name=$2
+  type=$3
+  os=$4
+  version=$5
+
+  vers=$(grep -v "^#" $mapfile | awk -v name=$name -v type=$type -v os=$os '{if($1==name && $2==type && $3==os) printf "%s %s %s\n",$4,$5,$6}' )
+
+  # Version rule
+  echo "$vers" | while read line; do
+    if [ "$type" == "os" ]; then
+      s_ver=$(echo $line|awk '{print $1}')
+      e_ver=$(echo $line|awk '{print $2}')
+      [ -n "$s_ver" ] || continue
+    elif [ "$type" == "kernel" ]; then
+      s_ver=$(echo $line|awk '{print $1}')
+      e_ver=$(echo $line|awk '{print $2}')
+      version=$(echo $version | sed "s/[.-]/./g" | awk -F. '{printf "%s.%s", $2,$3}')
+      [ -n "$s_ver" ] || continue
+    fi
+
+    if [ "$(chk_version $s_ver $e_ver $version)" == "1" ]; then
+         echo $line|awk '{print $3}' && return 0
+    fi
+  done
+  return 1
+}
+
+_k_file_file_name_info() {
+  local fname f_ext f_name sfilename nm fn type
+  fname=$1
+  f_path=$(dirname $fname)
+  sfilename=( $(echo $fname | sed "s/\./ /g") )
+  f_ext=${sfilename[ $(( ${#sfilename[*]} - 1 )) ]}
+  f_name=${sfilename[0]}
+  for nm in $(seq 1 $((${#sfilename[*]}-2)) ); do
+     f_name=$f_name.${sfilename[$nm]}
+  done
+  type=$(stat -c %s $fname  2> /dev/null)
+  if [ ! -n "$type" ]; then
+     type=null
+  elif (( $type <= 1 )) ;then
+     type=empty
+  else
+     type=file
+  fi
+
+  echo "$f_name $f_ext $f_path $type"
+}
+
+_k_file_chk_installed_file() {
+    local filename pname ifn
+    filename=$1
+    pname=( $(file_name_info $filename) )
+    if [ "${pname[1]}" == "rpm" ]; then
+       if rpm -qa --queryformat '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n' | grep -w "$(echo $(basename $filename) | sed "s/\.rpm//g" )$" >& /dev/null ; then
+          echo 1
+       else
+          rpm -qa --queryformat '%{NAME}\n' | grep -w "$(echo $(basename $filename) | sed "s/\.rpm//g")$" >& /dev/null && echo 1 || echo 0
+       fi
+    elif [ "${pname[1]}" == "tgz" -o "${pname[1]}" == "gz" ]; then
+       if [ -f $filename ]; then
+          for ifn  in $(tar ztf $filename); do
+             if [ ! -f /$ifn ]; then
+               echo 0
+               break
+             fi
+          done
+          echo 1
+       fi
+    elif [ "${pname[1]}" == "bz2" ]; then
+       if [ -f $filename ]; then
+          for ifn  in $(tar jtf $filename); do
+             if [ ! -a /$ifn ]; then
+               echo 0
+               break
+             fi
+          done
+          echo 1
+       else
+          echo 0
+       fi
+    elif [ "${pname[1]}" == "patch" ]; then
+       patch_file=$(grep "^#path:" $filename | awk '{print $2}')
+       if [  -f ${patch_file}.ace ]; then
+           echo 1
+       else
+           echo 0
+       fi
+    elif [ "${pname[1]}" == "sh" ]; then
+       sh_file=$(grep "^#path:" $filename | awk '{print $2}')
+       if [ -n "$sh_file" ]; then
+         if [  -f ${sh_file}.ace ]; then
+           echo 1
+         else
+           echo 0
+         fi
+       else
+         echo 0
+       fi
+    else
+       [ -f $filename ] && echo 1 || echo 0
+    fi
+}
+
+_k_file_chk_file() {
+  local check_var storage_dir packages rp
+  packages="$@"
+
+  check_var=
+  for rp in $packages; do
+      if [ -f $rp ]; then
+         echo "$rp"
+      else
+         check_var=1
+      fi
+  done
+  [ "$check_var" == "1" ] && echo 1
+}
+
+_k_file_clear_pkg() {
+   local filename
+   filename=$1
+   if [ -n "$filename" ]; then
+     if [ "$filename" != "/" -a "$filename" != "." ]; then
+       [ -d $filename ] && rm -fr $filename
+       [ -f $filename ] && rm -f $filename
+     fi
+   fi
+}
+
+_k_file_path() {
+  readlink -f $0
+}
+
+_k_file_size() {
+    local file
+    file=$1
+    [ -n "$file" ] || error_return "${FUNCNAME} <filename>" || return 1
+    [ -f $file ] || error_return "$file not found" || return 1
+    echo $(stat -c %s $file)
+}

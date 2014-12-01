@@ -1,0 +1,102 @@
+# .bashrc
+
+#Config
+script_log_path=~/script.log
+[ -d $script_log_path ] || mkdir -p $script_log_path
+
+#SVN
+export SVN_EDITOR=/usr/bin/vim
+
+log () {
+   cmd=( $@ )
+   datestr=$(date +%Y%m%d-%H%M%S)
+   echo "cmd : $@" > $script_log_path/${cmd[0]}-${datestr}.log
+   echo "pwd : $pwd" >> $script_log_path/${cmd[0]}-${datestr}.log
+   $@ | tee -a $script_log_path/${cmd[0]}-${datestr}.log
+}
+
+svn() {
+   cmd=( $@ )
+   datestr=$(date +%Y%m%d-%H%M%S)
+   echo "pwd: $(pwd)" > $script_log_path/svn-${cmd[0]}-${datestr}.log
+   /usr/bin/svn $@ | tee -a $script_log_path/svn-${cmd[0]}-${datestr}.log
+}
+
+diff() {
+   cmd=( $@ )
+   datestr=$(date +%Y%m%d-%H%M%S)
+   cmd_str=$(basename ${cmd[$((${#cmd[*]}-2))]})
+   cmd_str2=$(basename ${cmd[$((${#cmd[*]}-1))]})
+   echo "pwd: $(pwd)" > $script_log_path/diff-${cmd_str}-${cmd_str2}-${datestr}.log
+   /usr/bin/diff $@ | tee -a $script_log_path/diff-${cmd_str}-${cmd_str2}-${datestr}.log
+}
+
+kssh() {
+   local datestr KBIN
+   datestr=$(date +%Y%m%d-%H%M%S)
+   echo "pwd: $(pwd)" > $script_log_path/kssh-${datestr}.log
+   if [ -n "$_K_HOME" ]; then
+      KBIN=$_K_HOME/bin/kssh
+   else
+      KBIN=$(which kssh)
+   fi
+   if [ -n "$KBIN" ]; then
+       $KBIN $@ | tee -a $script_log_path/kssh-${datestr}.log
+   else
+       echo "$(basename $KBIN) not found"
+   fi
+}
+
+ssh() {
+   datestr=$(date +%Y%m%d-%H%M%S)
+   echo "pwd: $(pwd)" > $script_log_path/ssh-${datestr}.log
+   /usr/bin/ssh $@ | tee -a $script_log_path/ssh-${datestr}.log
+}
+
+telnet() {
+   datestr=$(date +%Y%m%d-%H%M%S)
+   echo "pwd: $(pwd)" > $script_log_path/telnet-${datestr}.log
+   /usr/bin/telnet $@ | tee -a $script_log_path/telnet-${datestr}.log
+}
+
+patch() {
+   cmd=( $@ )
+   datestr=$(date +%Y%m%d-%H%M%S)
+   cmd_str=$(basename ${cmd[$((${#cmd[*]}-1))]})
+   echo "pwd: $(pwd)" > $script_log_path/patch-${cmd_str}-${datestr}.log
+   /usr/bin/patch $@ | tee -a $script_log_path/patch-${cmd_str}-${datestr}.log
+}
+
+rm() {
+   cmd=( $@ )
+   datestr=$(date +%Y%m%d-%H%M%S)
+   cmd_str=$(basename ${cmd[$((${#cmd[*]}-1))]})
+   echo "pwd: $(pwd)" > $script_log_path/rm-$cmd_str-${datestr}.log
+   echo "cmd: $0 $@" >> $script_log_path/rm-$cmd_str-${datestr}.log
+   /bin/rm $@ | tee -a $script_log_path/rm-$cmd_str-${datestr}.log
+}
+
+cp() {
+   cmd=( $@ )
+   datestr=$(date +%Y%m%d-%H%M%S)
+   cmd_str=$(basename ${cmd[$((${#cmd[*]}-1))]})
+   echo "pwd: $(pwd)" > $script_log_path/cp-$cmd_str-${datestr}.log
+   echo "cmd: $0 $@" >> $script_log_path/cp-$cmd_str-${datestr}.log
+   /bin/cp $@ | tee -a $script_log_path/cp-$cmd_str-${datestr}.log
+}
+
+mv() {
+   cmd=( $@ )
+   datestr=$(date +%Y%m%d-%H%M%S)
+   cmd_str=$(basename ${cmd[$((${#cmd[*]}-1))]})
+   echo "pwd: $(pwd)" > $script_log_path/mv-$cmd_str-${datestr}.log
+   echo "cmd: $0 $@" >> $script_log_path/mv-$cmd_str-${datestr}.log
+   /bin/mv $@ | tee -a $script_log_path/mv-$cmd_str-${datestr}.log
+}
+
+
+clr() {
+   list="$(find $script_log_path/ -ctime +90 -type f )"
+   [ -n "$list" ] && /bin/rm -f $list
+}
+

@@ -1,0 +1,523 @@
+#Kage Miscellany Library 
+#$lib_ver$:0.3.60
+#. $(dirname $0)/klib.so
+#_k_mis(){
+#}
+#_k_mis_close(){
+#}
+
+_k_loaded_misc(){
+   local null
+}
+
+_k_misc_help() {
+   echo "Miscellany library
+   - screen
+   - daemon / pid
+   - module
+   - convert
+   - braket \"[1-5]\"
+   - progress
+"
+}
+
+_k_misc_screen_get_session() {
+  sessions=( )
+  [ -d /var/run/screen/S-$(id -u -n) ] && sessions=( $(ls /var/run/screen/S-$(id -u -n)/ ) )
+
+  _new_sessions=( $(ls /var/run/screen/S-$(id -u -n)/) )
+  i=$(expr ${#_new_sessions[*]} - 1)
+  while [ 0 -le $i ]; do
+    if [ "${sessions[$i]}" != "${_new_sessions[$i]}" ]; then
+       echo ${_new_sessions[$i]}
+       break
+    fi
+    i=$(expr $i - 1)
+  done
+}
+
+_k_misc_screen() { #run command on the screen 
+  local _opt _cmd
+  _opt=$(_k_opt "$*" -o) && shift 2
+  _cmd=$*
+
+  while [ 1 ]; do
+    [ -f /tmp/S-$(id -u -n).lock ] || break
+    sleep 1
+  done
+  touch /tmp/S-$(id -u -n).lock
+
+  if [ -n "$_cmd" ]; then
+    if [ "$_opt" == "b" ]; then
+     screen -d -m $_cmd
+    elif [ "$_opt" == "lb" ];then
+     screen -L -d -m $_cmd
+    elif [ "$_opt" == "l" ]; then
+     screen -L $_cmd
+    else
+     screen $_cmd
+    fi
+    sleep 0.1
+    screen_session=$(_k_misc_screen_get_session)
+    rm -f /tmp/S-$(id -u -n).lock
+    [ -n "$screen_session" ] || return 1
+    echo $screen_session
+    return 0
+  else
+     error_return "_k_screen [ -o <option> ] <cmd> [ <opt of cmd>]"
+  fi
+}
+
+_k_misc_progress_tui() {
+  local i z msg timeout loop
+  msg=$1
+  timeout=$2
+  loop=1800 # max 30min
+  [ $timeout -gt $loop ] && return 0
+  i=0
+  echo -n "$msg  "
+  for z in $(seq 1 $(($loop/4)) ) ; do
+    for s in $(echo "- \\ | /"); do
+      # add here for break option or commands
+      #
+      #
+      [ $i -gt $timeout ] && return 1
+      printf "\b%s" "$s"
+      sleep 1
+      i=$((i+1))
+    done
+  done
+  return 1
+}
+
+_k_misc_progress(){
+   #same meanning PID+kill and wait  
+   local msg timeout PID
+   msg=$1
+   timeout=$2
+   if [ ! -n "$msg" ]; then
+      echo "_k_misc_progress \"test progress\" 5"
+      return 1
+   fi
+   _k_misc_progress_tui "$msg" $timeout & 
+   wait $! >/dev/null 2>&1
+   printf "\b[%s]\n" done
+}
+
+if [ "$test" == "1" ];then
+  _k_misc_progress "test progress" 5
+fi
+
+
+_k_misc_pre_path() {
+   pre_path=$1
+   if [ -n "$pre_path" ]; then
+     export PATH=$pre_path:${PATH}
+   fi
+}
+ 
+_k_misc_path() {
+   back_path=$1
+   if [ -n "$back_path" ]; then
+      export PATH=${PATH}:$back_path
+   fi
+}
+ 
+_k_misc_unpath() {
+  un_path=$1
+  if [ -n "$un_path" ]; then
+     if echo $un_path | grep ":" >& /dev/null ; then
+        echo "path format error"
+        return 1
+     fi
+  else
+     echo "path not found"
+     return 1
+  fi
+  for ipath in $(echo ${PATH} | sed "s/:/ /g"); do
+      if [ "$un_path" != "$ipath" ]; then
+        if [ -n "$full_path" ]; then
+          full_path="${full_path}:$ipath"
+        else
+          full_path="$ipath"
+        fi
+      fi
+  done
+  export PATH=$full_path
+}
+
+_k_misc_module_set() {
+    module_path=$1
+    if [ -n "$module_path" ]; then
+echo "
+#----------------------------------------------------------------------#
+# system-wide profile.modules                                          #
+# Initialize modules for all sh-derivative shells                      #
+#----------------------------------------------------------------------#
+trap \"\" 1 2 3
+ 
+case \"\$0\" in
+    -bash|bash|*/bash) [ -f $module_path/init/bash ] && . $module_path/init/bash ;; 
+       -ksh|ksh|*/ksh) [ -f $module_path/init/ksh ] && . $module_path/init/ksh ;; 
+          -sh|sh|*/sh) [ -f $module_path/init/sh ] && . $module_path/init/sh ;; 
+                    *) [ -f $module_path/init/sh ] && . $module_path/init/sh ;;  # default for scripts
+esac
+ 
+trap - 1 2 3
+" >> /etc/profile
+      if [ -f /etc/csh.cshrc ]; then
+echo "
+#----------------------------------------------------------------------#
+# system-wide csh.modules                                              #
+# Initialize modules for all csh-derivative shells                     #
+#----------------------------------------------------------------------#
+if (\$?tcsh) then
+        set modules_shell=\"tcsh\"
+else
+        set modules_shell=\"csh\"
+endif
+ 
+[ -f $module_path/init/\${modules_shell} ] && source $module_path/init/\${modules_shell}
+ 
+unset modules_shell" >> /etc/csh.cshrc
+      fi
+   else
+         echo "module_path not found"
+         return 1
+   fi
+}
+
+_k_misc_module_sample() {
+    module_file=$1
+    if [ -n "$module_file" ]; then 
+        [ -d $(dirname $module_file) ] || mkdir -p  $(dirname $module_file)
+        echo "
+#%Module1.0#####################################################################
+##
+## modules modulefile
+##
+## modulefiles/modules.  Generated from modules.in by configure.
+##
+proc ModulesHelp { } {
+        global version prefix
+
+        puts stderr \"\tmodules - loads the modules software & application environment\"
+        puts stderr \"\n\tThis adds $prefix/* to several of the\"
+        puts stderr \"\tenvironment variables.\"
+        puts stderr \"\n\tVersion $version\n\"
+}
+
+module-whatis	\"loads the $(basename $module_file) environment\"
+
+# for Tcl script use only
+set	version		2011.0.013
+set	prefix		/global/opt/intel
+#set	exec_prefix	\${prefix}
+
+
+#setenv		MODULESHOME	\$prefix
+prepend-path    PATH   		\${prefix}/bin
+prepend-path    MANPATH		\${prefix}/man
+prepend-path    LD_LIBRARY_PATH	\${prefix}/lib
+#prepend-path    DYLD_LIBRARY_PATH	\${prefix}/lib
+#prepend-path    INTEL_LICENSE_FILE		\${prefix}/licenses/COM_L_CT__ZMNC-6PD2KCT6.lic
+#prepend-path    LM_LICENSE_FILE		\${prefix}/licenses/COM_L_CT__ZMNC-6PD2KCT6.lic
+" > $module_file
+        echo "
+#%Module
+set ModulesVersion \"$(basename $module_file)\"
+        " > $(dirname $module_file)/.version
+    else
+        echo "<module path>/<module base name>/<module file name>"
+        echo "ex) /global/modulefile/intel/ics"
+    fi
+
+}
+
+_k_misc_script_log() {
+    [ -d ~/script.log ] || mkdir -p ~/script.log 
+    script ~/script.log/$(date +%Y%m%d-%H%M%S).log
+}
+
+#prod-0[01-10]
+_k_misc_braket() {
+   local help="make a hostname list
+Usage) ${FUNCNAME} prod-0[01-10]"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+
+   IN=( $* )
+   if [ ${#IN[*]} -ge 1 ]; then
+
+     for A in ${IN[*]} ; do
+       if echo $A | grep "\[" >& /dev/null ; then
+         fval=$(echo $A | awk -F\[ '{print $1}' )
+         vval=$(echo $A | awk -F\[ '{print $2}' | sed 's/]//g')
+
+         ranges=( $(echo $vval | sed 's/,/ /g') )
+
+         for i in $(seq 0 $(( ${#ranges[*]} - 1 )) ); do
+           echo ${ranges[$i]} | grep "-" >&/dev/null && (
+             start=$(echo ${ranges[$i]} | awk -F- '{print $1}')
+             end=$(echo ${ranges[$i]} | awk -F- '{print $2}')
+             strlen=${#start}
+             for m in $(seq $start $end); do
+               printf "%s%0${strlen}d\n" "$fval" "$m"
+             done
+           ) || echo ${fval}${ranges[$i]}
+         done
+       else
+         echo $A
+       fi
+     done
+   fi
+}
+
+_k_misc_is_num() {
+   local help="check input value for number
+Usage) ${FUNCNAME} <str>"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+
+    local src
+    src=$@
+    [ -n "$src" ] || return 1
+    if [ "$(echo $src | sed "s/^[-+0-9][0-9.]*//g" | wc -c | sed "s/ //g" 2> /dev/null)" == "1" ]; then
+       echo 1
+       return 0
+    else
+       echo 0
+       return 1
+    fi
+}
+
+_k_misc_skip_blank(){
+   local in
+   in="$*"
+   echo $(echo $in | sed 's/\ //g')
+}
+
+#change 16,8,2 to 10
+_k_misc_chd10() {
+   local order input
+   input=$1
+   order=$2
+   [ -n "$order" ] || order=16
+   echo $(($order#$input))
+}
+
+#change 10 to 16,8,2
+_k_misc_c10hd() {
+   local order input
+   input=$1
+   order=$2
+   [ -n "$order" ] || order=16
+   echo "obase=$order;$input" | bc
+}
+
+_k_misc_8to10() {
+   local src
+   src=$1
+   echo $((8#$src))
+}
+
+_k_misc_2to10() {
+   local src
+   src=$1
+   echo $((2#$src))
+}
+
+_k_misc_16to10() {
+   local src
+   src=$1
+   echo $((16#$src))
+}
+
+_k_misc_10to16() {
+   local src
+   src=$1
+   printf "%02x" $src
+}
+
+_k_misc_chk_basesystem() {
+    local input basesystem
+    input=$1
+    if [ "$input" == "16" ]; then
+       basesystem="Hex"
+    elif [ "$input" == "10" ]; then
+       basesystem="10"
+    elif [ "$input" == "8" ]; then
+       basesystem="Oct"
+    elif [ "$input" == "2" ]; then
+       basesystem="bin"
+    else
+       basesystem="Unknown"
+    fi
+    if [ "$basesystem" == "Unknown" ]; then
+       echo "Unknown unit"
+       exit
+    fi
+    return 0
+}
+
+_k_misc_convert() {
+   local input
+   input=($*)
+   for ((i=0; i<${#input[*]}; i++)); do
+       if [ "${input[$i]}" == "-s" ]; then
+          i=$(($i+1))
+          src=${input[$i]}
+       elif [ "${input[$i]}" == "-d" ]; then
+          i=$(($i+1))
+          dest=${input[$i]}
+       elif [ "${input[$i]}" == "-v" ]; then
+          i=$(($i+1))
+          value=${input[$i]}
+       fi
+   done
+   _k_misc_chk_basesystem $src
+   _k_misc_chk_basesystem $dest
+   echo "obase=$dest;ibase=$src; $value;" | bc
+}
+
+_k_misc_hex() {
+    local value slot
+    value=0
+    for slot in $*; do
+        (( value |= 1 << $(( $slot - 1 ))  ))
+    done
+    printf "0x%x\n" $value
+}
+
+
+_k_misc_upper() {
+   echo $* | tr '[:lower:]' '[:upper:]'
+}
+
+_k_misc_lower() {
+   echo $* | tr '[:upper:]' '[:lower:]'
+}
+
+_k_misc_ctextchar(){
+   local order input
+   input=$1
+   order=$2
+   [ -n "$order" ] || order=0
+   if [ "$order" == "0" -o "$order" == "lower" -o "$order" == "low" ]; then
+      echo $input | tr '[:upper:]' '[:lower:]'
+   else
+      echo $input | tr '[:lower:]' '[:upper:]'
+   fi
+}
+
+_k_misc_rev_order() {
+   local total input
+   total=$1
+   input=$2
+
+   echo $(($total+1-$input))
+}
+
+# a shell must have #!/bin/sh
+# and have a exec permission
+# and run it self for example : ./<shell name>.sh
+#
+# example)
+# daemon() { }
+# _k_misc_chk_pid /var/run/subsys/<name>.pid
+# daemon &
+# _k_misc_chk_pid /var/run/subsys/<name>.pid $(echo $!)
+#
+_k_misc_chk_pid() {
+    local pid pid_file file_name
+    pid_file=$1
+    pid=$2
+    file_name=$3
+    [ -n "$file_name" ] || file_name=$(basename $0)
+
+    #check
+    if [ -f $pid_file ]; then
+        opid=$(cat $pid_file)
+        if [ -n "$opid" -a -d /proc/$opid ]; then
+            pid_name=$(cat /proc/$opid/status | grep "^Name:" | awk '{print $2}')
+            if [ "$pid_name" == "$file_name" ]; then
+               #running
+               return 1
+            else
+               echo "$opid is running but name($file_name) is different($pid_name)"
+            fi
+        else
+            rm -f $pid_file
+        fi
+    fi
+
+    #create pid
+    if [ -n "$pid" -a "$pid" != "null" ]; then
+      if _k_misc_is_num $pid >/dev/null ; then 
+         [ -d $(dirname $pid_file) ] || mkdir -p $(dirname ${pid_file})
+         echo $pid > $pid_file 
+      fi
+    fi
+    return 0
+}
+
+_k_misc_daemon() {
+    local func pid_file opt
+    func=$1
+    pid_file=$2
+    opt=$3
+    if [ "$opt" == "start" ]; then
+        _k_misc_chk_pid $pid_file null || error_exit "running..."
+
+        $func &
+
+        _k_misc_chk_pid $pid_file $(echo $!)
+        return 0
+    elif [ "$opt" == "stop" ]; then
+       if [ -f $pid_file ] ;then
+          kill $(cat $pid_file)
+          rm -f $pid_file
+          return 0
+       else
+          error_exit "stopped..."
+       fi
+    else 
+       echo "_k_misc_daemon <function name> <pid_file> <start|stop>"
+       return 1
+    fi
+}
+
+
+_k_misc_print_byte() {
+   local value unit value2 rbyte ii
+   rbyte[0]="B"
+   rbyte[1]="kB"
+   rbyte[2]="MB"
+   rbyte[3]="GB"
+   rbyte[4]="TB"
+   rbyte[5]="PB"
+   unit=1024
+   value=$1
+   [ -n "$value" ] || error_return "${FUNCNAME} <integer>" || return 1
+   for ((ii=1;ii<=6;ii++)); do
+       value2=$value
+       (( $value <= $unit )) && break
+       value=$( echo "$value / $unit" | bc )
+   done
+
+   echo "$value2 ${rbyte[$(($ii-1))]}"
+}
+
+_k_misc_check_value() {
+   local find input
+   find="$1"
+   shift 1
+   input=($*)
+   [ -n "$find" ] || find=NULL
+
+   [ "${#input[*]}" == "$#" ] || input[${#input[*]}]=NULL
+
+   for ((ii=0; ii<${#input[*]} ; ii++)); do
+       [ "$find" == "${input[$ii]}" ] && return 0
+   done
+   return 1
+}
+

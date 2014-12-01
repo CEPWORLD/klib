@@ -1,0 +1,158 @@
+# Kage
+# A library for make hostname list
+#$version$:0.2.51
+# _num_range=4 : prod-0004, _num_range=2 : prod-02
+
+if [ -f /etc/app.cfg ]; then
+   . /etc/app.cfg
+   _DEF=app
+else
+   _K_DB_HOME=/acefs
+   _K_TOOL=/opt/ace/tools
+   _K_LIB=$_K_TOOL/lib
+   db_server_path=/servers
+   db_cluster_path=/clusters
+   db_global_path=/global
+   [ -d $_K_DB_HOME/servers ] && _DEF=ace || _DEF=local
+fi
+
+. $_K_LIB/klib.so
+_k_load opt
+_k_load misc
+_k_load app_lib_db
+_k_load app_lib
+
+hostname_id_length=$(read_db $db_global_path/hostname_id_length)
+[ "$hostname_id_length" == "-" ] && hostname_id_length=4
+_num_range=$hostname_id_length
+
+hostname_dash=$(read_db $db_global_path/hostname_dash)
+[ "$hostname_dash" == "-" ] && hostname_dash=1
+
+#test show hostname
+_test=0
+
+
+function help() {
+local _APP_HELP
+_APP_HELP="$*"
+_app_name=$(basename $0)
+
+  printf "
+
+  $_app_name <option>  [ <cmd options> ... ]
+
+\t -t <app|ace|local>             : default : %s
+\t\t local : /etc/hosts
+\t\t ace   : ACE(/opt/ace)       
+\t\t app   : APP(/opt/app)       
+\t --help                         : this screen
+\t --test                         : test (show list)
+
+\t ** common option **
+\t -a                             : whole nodes of ACE or Local hosts
+\t -c <cluster>                   : whole nodes of SU number
+\t -h <hostname> [ <hostname2> ..] or <host>-0[001-100]  : hostnames
+\t -ip <ip> [ <ip2> ..]           : IPs
+
+\t ** ACE or APP **
+\t -r <rack number>               : whole nodes of rack number
+\t -sr <sub-rack/slot number>     : whole nodes of sub-rack/slot in the rack number
+\t -s <su number>                 : whole nodes of SU number
+\t -srv server-0[001-100]         : server-0[001-100]
+\t -st <state>                    : whole nodes of node state
+
+\t $_APP_HELP
+
+\t ex)
+\t  $_app_name [ --help ]             : help
+\t  $_app_name -c prod                : whole prod
+\t  $_app_name -ip 192.168.7.[11-5]   : 192.168.7.11 ~ 15
+\t  $_app_name -h prod-0[002-005]     : prod-0002 ~ prod-0005
+\t  $_app_name -r 2                   : whole node of rack number 2
+\t  $_app_name -r 2 -sr 2             : whole node of sub-rack 2 in rack number 2
+
+  " $_DEF
+  exit
+}
+
+#common options
+_k_opt_opt "$*" --help > /dev/null && help
+_k_opt_opt "$*" --test > /dev/null && _test=1
+_type=$(_k_opt_opt "$*" -t) || _type=$_DEF
+
+_host_num=$(_k_opt_num "$*" -h)
+_hostnames=$(_k_opt_opt "$*" -h $_host_num)
+#_hostnames=$(_k_opt_opt "$*" -h)
+_ips=$(_k_opt_opt "$*" -ip )
+_k_opt_opt "$*" -a >/dev/null && _all=1
+_cluster=$(_k_opt_opt "$*" -c)
+
+
+# ace or app options
+if [ "$_type" == "ace" -o "$_type" == "app" ]; then
+   #convert state
+   _state=$(_k_opt_opt "$*" -st)
+   if [ "$_state" == "maint" ]; then
+      _state="16"
+   elif [ "$_state" == "repair" ]; then
+      _state="17"
+   elif [ "$_state" == "ready" ]; then
+      _state="9"
+   elif [ "$_state" == "fail-on"  ]; then
+      _state="15"
+   elif [ "$_state" == "unknown" -o "$_state" == "-" ]; then
+      _state="7"
+   elif [ "$_state" == "boot-os" ]; then
+      _state="11"
+   else
+      _state="13"  #active
+   fi
+   
+   
+   _rack_num=$(_k_opt_opt "$*" -r)
+   _subrack_num=$(_k_opt_opt "$*" -sr)
+   _su_num=$(_k_opt_opt "$*" -s)
+   _servers=$(_k_opt_opt "$*" -srv)
+fi
+
+if [ -n "$_hostnames" ]; then
+   _hosts=$(_k_misc_braket $_hostnames)
+elif [ "$_all" == "1" ]; then
+   _hosts=$( for _cn in $(get_db_list $db_cluster_path); do
+       get_db_list $db_cluster_path/$_cn/hosts
+   done )
+elif [ -n "$_ips" ]; then
+   _ips_arr=( $(echo $_ips | sed "s/\./ /g") )
+   _k_load net
+   _ips_0_arr=($(_k_misc_braket ${_ips_arr[0]}))
+   _ips_1_arr=($(_k_misc_braket ${_ips_arr[1]}))
+   _ips_2_arr=($(_k_misc_braket ${_ips_arr[2]}))
+   _ips_3_arr=($(_k_misc_braket ${_ips_arr[3]}))
+   _ips_s=${_ips_0_arr[0]}.${_ips_1_arr[0]}.${_ips_2_arr[0]}.${_ips_3_arr[0]}
+   _ips_e=${_ips_0_arr[$((${#_ips_0_arr[*]}-1))]}.${_ips_1_arr[$((${#_ips_1_arr[*]}-1))]}.${_ips_2_arr[$((${#_ips_2_arr[*]}-1))]}.${_ips_3_arr[$((${#_ips_3_arr[*]}-1))]}
+   for (( i=$(_k_net_str2ip $_ips_s); i <= $(_k_net_str2ip $_ips_e); i++)); do
+      _hosts="$_hosts $(_k_net_ip2str $i)"
+   done
+   
+elif [ -n "$_cluster" ]; then
+   #_hosts=$(get_db_list_active $db_cluster_path/$_cluster/hosts)
+   _hosts=$(get_db_list $db_cluster_path/$_cluster/hosts)
+elif [ -n "$su" ];then
+   _hosts=$(get_hosts_in_group $_su_num $_type su)
+elif [ -n "$_rack_num" -a ! -n "$_subrack_num" ];then
+   _hosts=$(get_hosts_in_group $_rack_num $_type rack)
+elif [ ! -n "$_rack_num" -a -n "$_subrack_num" ];then
+   _hosts=$(get_hosts_in_group $_subrack_num $_type subrack)
+elif [ -n "$_rack_num" -a -n "$_subrack_num" ];then
+   _servers=""
+   _servers="$(echo $(get_servers_in_group $_rack_num $_type rack))"
+   _hosts=$(get_hosts_in_group $_subrack_num $_type subrack "$_servers")
+fi
+
+if [ "$_test" == "1" ]; then
+   echo "test> $_hosts"
+   exit
+fi
+
+[ -n "$_hosts" ] || help $_app_help

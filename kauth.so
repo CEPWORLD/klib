@@ -1,0 +1,59 @@
+#Kage Library  - auth
+#$lib_ver$:0.0.1
+#_k_auth(){
+#}
+#_k_auth_close(){
+#}
+#
+sshd_conf_file=sshd_config
+ssh_conf_file=/etc/ssh/$sshd_conf_file
+ssh_conf_file_tmp=$(mktemp /tmp/${sshd_conf_file}.XXXXXX)
+
+
+_k_auth_account_ssh() {
+        local mode uid_name addr chk
+        mode=$1
+        uid_name=$2
+        addr=$3
+        chk=0
+        [ -n "$addr" ] && uid_name=${uid_name}"@"${addr}
+        if [ $mode == "rm" ]; then
+                unset _account
+                for i in $(cat ${ssh_conf_file} | grep AllowUsers); do
+                       [ "$uid_name" != "$i" ] && _account=${_account}" "${i}
+                done
+        elif [ $mode == "new" ]; then
+                unset _account
+                for i in $(cat ${ssh_conf_file} | grep -w AllowUsers); do
+                        [ "$uid_name" == "$i" ] && chk=1
+                        _account=${_account}" "${i}
+                done
+                [ $chk -ne 1 ] && _account=${_account}" "${uid_name}
+                [ -n "$_account" ] || _account="AllowUsers ${uid_name}"
+        else
+                for i in $(cat ${ssh_conf_file} | grep AllowUsers); do
+                        [ "$i" != "AllowUsers" ] && echo ${i}
+                done
+        fi
+        echo $_account
+}
+
+_k_auth_new_sshd_account() {
+        local mode uid_name addr chk
+        mode=$1
+        uid_name=$2
+        addr=$3
+        chk=0
+        cat ${ssh_conf_file} | while read line; do 
+            if echo $line | grep -w "^AllowUsers" > /dev/null 2>&1 ; then
+                _account_ssh ${mode} ${uid_name} ${addr}
+                chk=1
+            else
+                echo $line
+            fi
+        done
+        if [ "$mode" == "new" -a "$chk" == "0" ]; then
+            echo "AllowUsers ${uid_name}"
+        fi
+}
+

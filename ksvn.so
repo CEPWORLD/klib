@@ -1,0 +1,299 @@
+#Kage Library 
+#$lib_ver$:0.0.52
+#. $(dirname $0)/klib.so
+_k_loaded_svn() {
+   local null
+}
+
+_k_svn_help() {
+  echo "SVN library"
+}
+
+_k_svn() {
+  _k_load opt
+  export SVN_EDITOR=/usr/bin/vim
+  [ -n "$SVN_HOME" ] || export SVN_HOME=~/work/ace.devel/ace.src
+}
+
+_k_svn_close(){
+  unset SVN_EDITOR
+  unset SVN_HOME
+  _k_unload opt
+}
+
+_k_svn_set_tunnel() {
+   #example) _k_svn_set_tunnel 'kage_ssh = $TUNNEL_SSH ssh -p 54321'
+   local _opt
+   _opt=$1
+   if [ $# -ne 1 ]; then
+     echo
+     echo "example) _k_svn_set_tunnel 'kage_ssh = $TUNNEL_SSH ssh -p 54321'"
+     echo "_k_svn_set_tunnel <tunnel string>"
+     echo
+     echo "using svn command)"
+     echo "svn <cmd> svn+kage_ssh://kage@localhost/...."
+     echo
+     return 1
+   else
+     [ -d ~/.subversion ] || error_return "not found svn's config dir"
+     cat ~/.subversion/config | while read line ; do
+      if echo $line | grep "^[tunnels]" ; then
+         echo $line
+         echo $_opt
+      else
+         echo $line
+      fi
+     done > ~/.subversion/config~
+     mv ~/.subversion/config~ ~/.subversion/config
+   fi
+}
+
+_k_svn_log_help(){
+  echo "
+  _k_svn_log [ -r <r1:r2> ] [ -f <filename> ] [ -u <username> ]
+  _k_svn_log -h : help
+  "
+}
+
+_k_svn_log_old() {
+  local logfile id
+  logfile=$(mktemp /tmp/svn.XXXXXXXX)
+
+  #svn log -v -r 2500:2507 install.sh
+  id=$1
+  if [ ! -n "$id" ]; then
+      echo "Required ID"
+      return 1
+  fi
+
+  if [ "$id" == "-h" ]; then
+      _k_svn_log_help
+      return 1
+  fi
+
+  svn log -v > $logfile
+
+  found=0
+  cat $logfile | while read line ; do
+    [ -n "$(echo $line | grep "| $id |")" ] && found=1
+    [ $found -eq 1 ] &&  printf "%s\n" "$line"
+    if [ "$line" == "------------------------------------------------------------------------" ] ; then found=0; fi
+  done
+
+  [ "$logfile" == "-s" ] && rm -f $logfile
+
+}
+
+_k_svn_log() {
+  local logfile id
+  logfile=$(mktemp /tmp/svn.XXXXXXXX)
+
+  #svn log -v -r 2500:2507 -f install.sh -u <username>
+  id=$(_k_opt_opt "$*" -u)
+  range=$( _k_opt_opt "$*" -r)
+  [ -n "$range" ] && range="-r $range"
+  file=$( _k_opt_opt "$*" -f)
+  
+  if _k_opt_opt "$*" -h >& /dev/null; then
+     _k_svn_log_help
+     return 0
+  fi
+
+  if [ -n "$id" ]; then
+     svn log -v $range $file > $logfile
+
+     found=0
+     cat $logfile | while read line ; do
+       [ -n "$(echo $line | grep "| $id |")" ] && found=1
+       [ $found -eq 1 ] &&  printf "%s\n" "$line"
+       if [ "$line" == "------------------------------------------------------------------------" ] ; then found=0; fi
+     done
+
+     [ "$logfile" == "-s" ] && rm -f $logfile
+  else
+     svn log -v $range $file 
+  fi
+
+}
+
+_k_slog() {
+   _k_svn_log $*
+}
+
+_k_svn_vi() {
+   local help="vi SVN source file
+Usage) ${FUNCNAME}"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+
+   local file f_dir k_file
+   file=$1
+   [ -n "$file" ] || error_return "file not found" || return 1
+   [ -f $file ] || error_return "$file not found" || return 1
+
+   f_dir=$(dirname $file)/kage
+   k_file=$f_dir/$(basename $file)
+   if [ -f $k_file ]; then
+      if (( $(svn diff $file | wc -l) == 0 )); then
+          vi $k_file 
+      else
+          echo "Fix it first. original file($file) not clear"
+      fi
+   else
+      [ -d $f_dir ] || mkdir -p $f_dir
+      cp -a $file $k_file
+      vi $k_file
+      cmp $file $k_file >/dev/null && rm -f $k_file
+   fi
+}
+
+_k_svi() {
+   _k_svn_vi $*
+}
+
+_k_svn_update() {
+   local help="update svn
+Usage) ${FUNCNAME}"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   local base_path chk
+   base_path=$1
+   if [ ! -n "$base_path" ]; then
+       [ -n "$SVN_HOME" ] && base_path=$SVN_HOME || base_path=$(pwd)
+   fi
+   [ -d $base_path ] || error_return "$base_path not found" || return 1
+   cd $base_path
+   for dd in $(find . -name kage); do
+      for ff in $(ls $dd ); do
+          if [ -f $dd/$ff ]; then
+              echo ">> update $dd/$ff file"
+              svn_ff=$(echo $dd/$ff | sed "s#/kage/#/#g")
+              if [ -f $svn_ff ]; then 
+                 svn update $svn_ff
+                 if (( $(svn diff $svn_ff | wc -l) == 0 )); then
+                    cp -a $dd/$ff $svn_ff && rm -f $dd/$ff
+                 else
+                     echo "conflict $svn_ff <--> $dd/$ff"
+                     chk=1
+                 fi
+              else
+                 echo "add $dd/$ff to SVN ?"
+                 read x
+                 if [ "$x" == "y" -o "$x" == "yes" -o "$x" == "Y" -o "$x" == "Yes" -o "$x" == "YES" ]; then
+                     cp -a $dd/$ff $svn_ff
+                     svn add $svn_ff
+                 fi
+              fi
+          fi
+      done
+      if [ -d $dd ]; then
+          (( $(ls $dd | wc -l ) == 0 )) && rmdir $dd
+      fi
+   done
+   [ "$chk" == "1" ] || svn update
+}
+
+_k_supdate() {
+    _k_svn_update $*
+}
+
+_k_svn_find() {
+   local help="find files
+Usage) ${FUNCNAME}"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   local base_path chk find
+   find=$1
+   [ -n "$SVN_HOME" ] && base_path=$SVN_HOME || base_path=$(pwd)
+   [ -d $base_path ] || error_return "$base_path not found" || return 1
+   cd $base_path
+   find . -name "$find"
+}
+
+_k_sfind() {
+   _k_svn_find $*
+}
+
+_k_svn_working_diff() {
+   local help="diff working file in SVN
+Usage) ${FUNCNAME} [ -f <filename> ] [ <base_path> ]
+  -f <filename> : diff working file and original svn source file 
+  None          : diff all working files
+"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   local base_path chk
+   if [ "$1" == "-f" ]; then
+     file=$2
+     work_file=$(dirname $file)/kage/$(basename $file)
+     [ -f $work_file ] && diff -up $work_file $file || error_return "working file not found"
+   else
+     base_path=$1
+     if [ ! -n "$base_path" ]; then
+        [ -n "$SVN_HOME" ] && base_path=$SVN_HOME || base_path=$(pwd)
+     fi
+     [ -d $base_path ] || error_return "$base_path is not directory or not found" || return 1
+     cd $base_path
+     for dd in $(find . -name kage); do
+       for ff in $(ls $dd ); do
+          if [ -f $dd/$ff ]; then
+              svn_ff=$(echo $dd/$ff | sed "s#/kage/#/#g")
+              if [ -f $svn_ff ]; then
+                 svn update $svn_ff
+                 diff -up $dd/$ff $svn_ff
+              fi
+          fi
+       done
+       if [ -d $dd ]; then
+          (( $(ls $dd | wc -l ) == 0 )) && rmdir $dd
+       fi
+     done
+  fi
+}
+
+_k_swdiff() {
+   _k_svn_working_diff $*
+}
+
+_k_svn_works() {
+    local help="show working directory and files
+Usage) ${FUNCNAME}"
+    [ "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help && return 0
+   local base_path chk
+   base_path=$1
+   if [ ! -n "$base_path" ]; then
+       [ -n "$SVN_HOME" ] && base_path=$SVN_HOME || base_path=$(pwd)
+   fi
+   for svn_work in $(find $base_path -type d -name "kage"); do
+        if (( $(ls $svn_work | wc -l 2>/dev/null ) > 0 )); then
+             echo "[ $svn_work ]"
+             ls $svn_work
+        fi
+   done
+}
+
+_k_sworks() {
+   _k_svn_works $*
+}
+
+_k_svn_find_not_member() {
+    local help="Find not membered file in SVN
+Usage) ${FUNCNAME}"
+    [ "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help && return 0
+   local base_path chk
+   base_path=$1
+   if [ ! -n "$base_path" ]; then
+       [ -n "$SVN_HOME" ] && base_path=$SVN_HOME || base_path=$(pwd)
+   fi
+   cd $base_path
+   for dd in $(find . -type d | grep -v -e "/.svn$" -e "/.svn/" -e "/kage$" -e "/kage/" ); do
+       #for ff in $(echo "$(find $dd -maxdepth 1 -type f) $(find $dd -maxdepth 1 -type l)" | grep -v -e "/\.svn$" -e "/\.svn/" -e "/\.dir-locals\.el" -e ".o$" -e "\.test$" -e "\.a$" -e "\.0$" -e "/ip2str$" -e "/str2ip$" -e "/pxestr$" -e "/now$" -e "/convert_date$" -e "/ace_ibnet_client$" -e "/ace_version$" -e "/ace_read_config$" -e "/convert_cowfile$" -e "/json$" -e "/ace_ibstatd$" -e "/ace_dbtest$" -e "/ace_sged$" -e "/aced$" -e "/make.version$" -e "/ace_version.c" -e "/ace_server$" -e "/make.depend$" -e "/ace_ethstatd$" -e "/ace_ethstat2d$" -e "/ace_dbmon$" -e "/ace.static$" -e "/ace_get$" -e "/ace_put$" -e "/ace_acctd$" -e "/ace_agent$" -e "/ace_log_client$" -e "/ace_getpass$" -e "/gethostbyname$" -e "/tags$" -e "/$extent_copy$" -e "/ace_emsd$" -e "/ace_server.static$" -e "/cmosedit$" -e "/extent_copy$" ); do
+       echo "$(find $dd -maxdepth 1 -type f) $(find $dd -maxdepth 1 -type l)" | grep -v -e "/\.svn$" -e "/\.svn/" -e "/\.dir-locals\.el" -e ".o$" -e "\.test$" -e "\.a$" -e "\.0$" -e "/ip2str$" -e "/str2ip$" -e "/pxestr$" -e "/now$" -e "/convert_date$" -e "/ace_ibnet_client$" -e "/ace_version$" -e "/ace_read_config$" -e "/convert_cowfile$" -e "/json$" -e "/ace_ibstatd$" -e "/ace_dbtest$" -e "/ace_sged$" -e "/aced$" -e "/make.version$" -e "/ace_version.c" -e "/ace_server$" -e "/make.depend$" -e "/ace_ethstatd$" -e "/ace_ethstat2d$" -e "/ace_dbmon$" -e "/ace.static$" -e "/ace_get$" -e "/ace_put$" -e "/ace_acctd$" -e "/ace_agent$" -e "/ace_log_client$" -e "/ace_getpass$" -e "/gethostbyname$" -e "/tags$" -e "/$extent_copy$" -e "/ace_emsd$" -e "/ace_server.static$" -e "/cmosedit$" -e "/extent_copy$" -e "/gtools/version$" | while read line; do
+                if [ -f $dd/.svn/entries ]; then
+                   grep "^$(basename "$line")$" $dd/.svn/entries >& /dev/null || echo "$line is not membered file"
+                else
+                   echo "$dd directory is not SVN member"
+                fi
+       done
+   done
+}
+
+_k_sfm() {
+   _k_svn_find_not_member $*
+}

@@ -1,0 +1,81 @@
+
+#Kage Library  - vbox
+#$lib_ver$:0.0.13
+
+_k_loaded_vbox(){
+   local null
+}
+
+_k_vbox_help() {
+   echo "virtual box control library"
+}
+
+#_k_vbox(){
+#}
+#_k_vbox_close(){
+#}
+     
+_k_vbox_su() {
+   local id
+   id=$1
+   id $id >/dev/null || return 1
+   shift 1
+   su - $id $*
+}
+
+_k_vbox_list() {
+    vboxmanage list vms
+}
+
+_k_vbox_create() {
+    local vms ostype
+    vms=$1
+    ostype=$2
+    vboxmanage createvm --name $vms --ostype $ostype
+}
+
+_k_vbox_delete() {
+    local vms
+    vms=$1
+    vboxmanage unregistervm $vms --delete
+}
+
+_k_vbox_state() {
+    local vms
+    vms=$1
+    vboxmanage showvminfo "$vms" | grep "State" | awk '{print $2;}'
+}
+
+_k_vbox_power() {
+    local vms cmd chk
+    cmd=$1
+    vms=$2
+    if [ "$cmd" == "off" -o "$cmd" == "reset" -o "$cmd" == "savestate" -o "$cmd" == "resume" -o "$cmd" == "on" -o "$cmd" == "state" -o "$cmd" == "powerbutton" -o "$cmd" == "sleepbutton" ]; then
+        if [ "$cmd" == "off" ]; then 
+           cmd=poweroff
+        elif [ "$cmd" == "powerbutton" ]; then
+           cmd=acpipowerbutton
+        elif [ "$cmd" == "sleepbutton" ]; then
+           cmd=acpisleepbutton
+        elif [ "$cmd" == "on" ]; then
+           chk=1
+           _k_vbox_start $vms
+        elif [ "$cmd" == "state" ]; then
+           chk=1
+           _k_vbox_state $vms
+        fi
+
+        if [ "$cmd" == "poweroff" -o "$cmd" == "savestate" -o "$cmd" == "powerbutton" -o "$cmd" == "sleepbutton" -o "$cmd" == "reset" ]; then 
+              [ "$(_k_vbox_state $vms)" == "running" ] || chk=1
+        fi
+        [ "$chk" != "1" ] &&  vboxmanage controlvm $vms $cmd
+    else
+       echo "_k_vbox_power <on|off|reset|savestate|resume|powerbutton|sleepbutton|state> <vms>"
+    fi
+}
+
+_k_vbox_info() {
+    local vms
+    vms=$1
+    vboxmanage showvminfo $vms
+}

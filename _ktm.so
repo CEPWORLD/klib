@@ -1,0 +1,31 @@
+
+#Kage Library  - tm
+#$lib_ver$:0.0.5
+_k_loaded_tm(){
+   local null
+}
+_k_tm_help() {
+  echo "Time convert library"
+}
+
+#_k_tm(){
+#   start code here
+#}
+#_k_tm_close(){
+# close code here
+#}
+     
+_k_tm_sec() {
+   echo $(date '+%s')
+}
+
+_k_tm_convert() {
+   local sec format
+   sec=$1
+   shift 1
+   format=$*
+   [ ! -n "$sec" -o "$sec" == "null" -o "$sec" == "now" ] && sec=$(_k_tm_sec)
+   [ -n "$format" ] || format="%Y-%m-%d %H:%M:%S"
+   #echo $(date --date="@$sec" "+%Y-%m-%d %H:%M:%S")
+   echo $(date --date="@$sec" "+$format")
+}

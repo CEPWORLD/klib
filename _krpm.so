@@ -1,0 +1,98 @@
+#Kage Library  - rpm
+#$lib_ver$:0.0.3
+
+_k_loaded_rpm(){
+   local null
+}
+
+_k_rpm_help() {
+    local help="Library rpm's  help
+Usage) ${FUNCNAME} "
+    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    echo "Library : rpm "
+}
+
+
+#include cmd
+_k_rpm(){
+    [ -n "$_K_LIB" ] || error_return "_K_LIB not found" || return 1
+    local help="Library rpm's start function
+Usage) ${FUNCNAME} "
+    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+
+    ### start(open) library code here ###
+    _k_cmd_check_os
+    if [ "$OS_NAME" == "ubuntu" ]; then
+        rpm_bin=dpkg
+    elif [ "$OS_NAME" == "centos" -o "$OS_NAME" == "rhel" ]; then
+        rpm_bin=rpm
+    elif [ "$OS_NAME" == "osx" ]; then
+        rpm_bin=pkgutil
+    elif [ "$OS_NAME" == "sles" ]; then
+        rpm_bin=zypper
+    fi
+}
+
+
+#_k_rpm_close(){
+#    local help=" Library rpm's closing function
+#Usage) ${FUNCNAME} "
+#    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+#    ### close library code here ###
+#}
+
+
+#_k_rpm_example(){
+#    local help="help
+#Usage) ${FUNCNAME} "
+#    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+#    ### your code here ###
+#}
+
+_k_rpm_list() {
+    _k_cmd_check_os
+    if [ "$OS_NAME" == "ubuntu" ]; then
+        $rpm_bin -l 
+    elif [ "$OS_NAME" == "centos" -o "$OS_NAME" == "rhel" ]; then
+        $rpm_bin -qa
+    elif [ "$OS_NAME" == "osx" ]; then
+        $rpm_bin --packages
+    elif [ "$OS_NAME" == "sles" ]; then
+        $rpm_bin lr
+    fi
+}     
+
+_k_rpm_list_detail() {
+    _k_cmd_check_os
+    if [ "$OS_NAME" == "ubuntu" ]; then
+        $rpm_bin -L
+    elif [ "$OS_NAME" == "centos" -o "$OS_NAME" == "rhel" ]; then
+        $rpm_bin -ql
+    elif [ "$OS_NAME" == "osx" ]; then
+        $rpm_bin --packages
+    elif [ "$OS_NAME" == "sles" ]; then
+        $rpm_bin lr
+    fi
+}
+
+_k_rpm_install() {
+    _k_cmd_check_os
+    if [ "$OS_NAME" == "ubuntu" ]; then
+        $rpm_bin -i $*
+    elif [ "$OS_NAME" == "centos" -o "$OS_NAME" == "rhel" ]; then
+        $rpm_bin -ihv $*
+    elif [ "$OS_NAME" == "sles" ]; then
+        $rpm_bin in $*
+    fi
+}
+
+_k_rpm_del() {
+    _k_cmd_check_os
+    if [ "$OS_NAME" == "ubuntu" ]; then
+        $rpm_bin -r $*
+    elif [ "$OS_NAME" == "centos" -o "$OS_NAME" == "rhel" ]; then
+        $rpm_bin -e $*
+    elif [ "$OS_NAME" == "sles" ]; then
+        $rpm_bin 
+    fi
+}

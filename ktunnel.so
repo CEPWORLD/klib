@@ -1,0 +1,243 @@
+#Kage Library  - tunnel
+#$lib_ver$:0.0.27
+
+_k_loaded_tunnel(){
+   local null
+}
+
+#_k_tunnel_help() {
+# echo tunnel library
+#}
+
+#
+_k_tunnel(){
+   base_local_port=10000
+   export _screen_bin=$( which screen 2>/dev/null )
+   [ -f $_screen_bin ] || error_return "$(basename $0) need screen command"
+}
+
+
+#_k_tunnel_close(){
+#    echo close code here
+#}
+     
+_k_tunnel_find_screen() {
+    local dest pid
+    dest=$1
+    pid=$($_screen_bin -ls | grep -e Detached -e Attached | awk '{print $1}' | grep ".${dest}=$" | awk -F. '{print $1}')
+    [ -n "$pid" ] && echo $pid || return 1
+}
+
+_k_tunnel_find_screen_port() {
+    local screen_pid
+    screen_pid=$1
+    if [ -d /proc ]; then
+        #Linux
+        screen_info=( $(cat /proc/$screen_pid/cmdline | sed -e "s/L/ /g" -e "s/:/ /g") )
+        echo ${screen_info[${#screen_info[*]}-3]}
+    else
+        #MAC
+        for sci in $(ps -ef | awk -v pid=$screen_pid '{if($2==pid) print}'); do
+            echo $sci | grep -e "^-L" -e "/tmp/XXXXXXXXXX.L"
+        done | awk -F: '{print $1}' | sed -e "s/-L//g" -e "s#/tmp/XXXXXXXXXX.L##g"
+    fi
+}
+
+_k_tunnel_find_last_port() {
+    for sc_pid in $(_k_tunnel_find_screen); do
+        echo $(_k_tunnel_find_screen_port $sc_pid)
+    done | sort -n | uniq | tail -n 1
+}
+
+_k_tunnel_kill() {
+  local _dest tmp_pid
+  _dest=$1
+
+#  for i in $(seq 0 $(($argc-1)) ); do
+#     echo ${argv[$i]} | grep "@" >& /dev/null && _dest=$(echo ${argv[0]}|awk -F@ '{print $2}')
+#  done
+#  [ -n "$_dest" ] ||  _dest=${argv[1]}
+
+  tmp_pid=$(_k_tunnel_find_screen $_dest) || return 1
+  [ "$tmp_pid" ] &&   kill -9 $tmp_pid
+  screen -wipe >/dev/null
+}
+
+_k_tunnel_list_v1() {
+  local host
+  host=$1
+
+  for screen_ls in $($_screen_bin -ls | grep -e Detached -e Attached | awk '{print $1}' | awk -F= '{print $1}'); do
+      a=( $( echo $screen_ls | sed "s/\./ /g" )  )
+      a_max=$((${#a[*]}-1))
+      for ((i=1 ; i<$a_max; i++)); do
+         printf "%s." ${a[$i]}
+      done
+
+      printf "%s" ${a[$a_max]}
+      echo
+  done
+}
+
+_k_tunnel_list() {
+  local host chk
+  host=$1
+
+  for screen_ls in $($_screen_bin -ls | grep -e Detached -e Attached | awk '{print $1}' | awk -F= '{print $1}'); do
+      a=( $( echo $screen_ls | sed "s/\./ /g" )  )
+      a_max=$((${#a[*]}-1))
+      for ((i=1 ; i<$a_max; i++)); do
+         printf "%s." ${a[$i]}
+      done
+
+      if [ -n "$host" ]; then
+          if [ "$host" == "$(printf "%s" ${a[$a_max]})" ]; then
+              printf "%s" ${a[$a_max]}
+              chk=1
+              break
+          fi
+      else
+          printf "%s" ${a[$a_max]}
+          echo
+      fi
+  done
+
+  [ -n "$host" -a "$chk" != "1" ] && return 1
+  return 0
+}
+
+_k_tunnel_list_port() {
+  for screen_ls in $($_screen_bin -ls | grep -e Detached -e Attached | awk '{print $1}' | awk -F= '{print $1}'); do
+      a=( $( echo $screen_ls | sed "s/\./ /g" )  )
+      a_max=$((${#a[*]}-1))
+      for ((i=1 ; i<$a_max; i++)); do
+         printf "%s[%s]" ${a[$i]} $(_k_tunnel_find_screen_port $(_k_tunnel_find_screen ${a[$i]}))
+      done
+      printf "%s[%s]" ${a[$a_max]} $(_k_tunnel_find_screen_port $(_k_tunnel_find_screen ${a[$a_max]}))
+      echo
+  done
+}
+
+_k_tunnel_open() {
+   local _dest _host1 last_port new_port jump help ssh_opt screen_pid ssh_tmp 
+   #ssh_opt="-o StrictHostKeychecking=no -o ConnectTimeout=3 -o NoHostAuthenticationForLocalhost -o CheckHostIP=no -o UserKnownHostsFile=/dev/null  -X "
+   ssh_opt="-o StrictHostKeychecking=no -o CheckHostIP=no -o UserKnownHostsFile=/dev/null -X "
+   help="_k_tunnel_open <dest host> <id>@<hostname> [<id2>@<hostname2>] / open SSH Tunnel"
+   _dest=$1
+   _id1=$(echo $2 | awk -F@ '{print $1}')
+   _host1=$(echo $2 | awk -F@ '{print $2}')
+   _id2=$(echo $3 | awk -F@ '{print $1}')
+   _host2=$(echo $3 | awk -F@ '{print $2}')
+   (($# <= 3 )) || error_return "it support up to 2 tunnel" || return 1
+
+   if [ -n "$(_k_tunnel_find_screen $_dest)" ]; then
+        error_return "exist $_dest tunnel" ||  return 1
+   fi
+   last_port=$(_k_tunnel_find_last_port)
+   [ -n "$last_port" ] && new_port=$(( $last_port + 1)) || new_port=$base_local_port
+
+   if (($#==3)); then
+     [ -n "$_id2" -a -n "$_host2" ] || error_return "host2 and id2 not found" || return 1
+
+     ssh_tmp=$(mktemp /tmp/XXXXXXXXXX.L${new_port}:$_host1:22)
+
+     echo "ssh $ssh_opt -f -L$((${new_port}+10000)):${_host2}:22 $2 2>/dev/null 'sleep 10' || exit
+     echo
+     echo Detache is Control a+d for screen mode
+     echo
+     echo $_id2@$_host2 password
+     ssh $ssh_opt -p $((${new_port}+10000)) -L ${new_port}:$_dest:22 ${_id2}@localhost 2>/dev/null" > $ssh_tmp
+
+     chmod +x $ssh_tmp
+     $_screen_bin -S ${_dest}= $ssh_tmp
+     rm -f $ssh_tmp
+
+   elif (($#==2)); then
+     echo
+     echo "  Detache is Control a+d (screen mode)"
+     echo
+     sleep 3
+     $_screen_bin -S ${_dest}= ssh $ssh_opt -C -L${new_port}:$_dest:22 $2
+   else
+     error_return "don't known tunnel information"
+   fi
+}
+
+_k_tunnel_ssh() {
+   local _input _dest ssh_opt _id _dest local_port screen_pid
+   _input=($*)
+   ssh_opt="-o StrictHostKeychecking=no -o CheckHostIP=no -o UserKnownHostsFile=/dev/null -X "
+   if echo ${_input[0]} | grep "@" >/dev/null; then
+      _id=$(echo ${_input[0]} | awk -F@ '{print $1}') 
+      _dest=$(echo ${_input[0]} | awk -F@ '{print $2}') 
+   else
+      _dest=${_input[0]}
+   fi
+  
+   screen_pid=$(_k_tunnel_find_screen $_dest)
+   if [ -n "$screen_pid" ]; then
+      _input[0]=""
+      [ -n "$_id" ] || _id=$(id -un)
+      local_port=$(_k_tunnel_find_screen_port $screen_pid)
+      echo "$_id@${_dest}'s password"
+      ssh $ssh_opt -p $local_port $_id@localhost ${_input[*]} 2>/dev/null
+   else
+      ssh $ssh_opt ${_input[*]} 2>/dev/null
+   fi
+}
+
+_k_tunnel_scp() {
+   local argc argv _dest _id _dest_cmd _scp_id _scp_op screen_pid local_port
+   ssh_opt="-o StrictHostKeychecking=no -o CheckHostIP=no -o UserKnownHostsFile=/dev/null -X "
+   argv=($*)
+   argc=${#argv[*]}
+
+  for i in $(seq 0 $(($argc-1)) ); do
+    if echo ${argv[$i]} | grep "@" | grep ":" >& /dev/null ; then
+        _id=$(echo ${argv[$i]}|awk -F@ '{print $1}')
+        _dest=$(echo ${argv[$i]}|awk -F@ '{print $2}' | awk -F: '{print $1}')
+        _dest_cmd=$(echo ${argv[$i]}|awk -F@ '{print $2}' | awk -F: '{print $2}')
+        _scp_id=$i
+        if (( $argc == 2 )); then
+          break
+        elif (( $argc == 3 )); then
+          _scp_op=${argv[0]}
+          break
+        else
+          echo $help
+          return 1
+        fi
+
+    elif echo ${argv[$i]} | grep ":" >& /dev/null ; then
+        _id=$(id -u -n)
+        _dest=$(echo ${argv[$i]} | awk -F: '{print $1}')
+        _dest_cmd=$(echo ${argv[$i]}| awk -F: '{print $2}')
+        _scp_id=$i
+        if (( $argc == 2 )); then
+          break
+        elif (( $argc == 3 )); then
+          _scp_op=${argv[0]}
+          break
+        else
+          echo $help
+          return 1
+        fi
+    fi
+  done
+
+   screen_pid=$(_k_tunnel_find_screen $_dest)
+   if [ -n "$screen_pid" ]; then
+      _input[0]=""
+      [ -n "$_id" ] || _id=$(id -un)
+      local_port=$(_k_tunnel_find_screen_port $screen_pid)
+
+      echo "$_id@${_dest}'s password"
+      if [ $argc -eq $(( $_scp_id + 1 )) ]; then
+           scp $ssh_opt $_scp_op -P $local_port ${argv[$(( $_scp_id - 1 ))]} $_id@localhost:$_dest_cmd 2>/dev/null
+      else
+           scp $ssh_opt $_scp_op  -P $local_port $_id@localhost:$_dest_cmd ${argv[$(( $argc - 1 ))]} 2>/dev/null
+      fi
+   else
+      scp $ssh_opt ${_input[*]} 2>/dev/null
+   fi
+}

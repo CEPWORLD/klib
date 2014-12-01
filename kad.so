@@ -1,0 +1,361 @@
+#Kage Library  - ace
+#$lib_ver$:0.0.65
+_k_loaded_ad(){
+   local null
+}
+
+_k_ad(){
+    local help="initialization function for Library ad
+Usage) ${FUNCNAME}"
+    [ "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help && return 0
+   [ -n "$_K_AD_HOME" ] || _K_AD_HOME=~/work/ace.devel/ace.src
+}
+
+#_k_ad_close(){
+# close code here
+#}
+     
+_k_ad_help() {
+    local help="ACE source development Library
+Usage) ${FUNCNAME}"
+    [ "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help && return 0
+    echo $help
+}
+
+_k_ad_home() {
+    local help="Show home path
+Usage) ${FUNCNAME}"
+    [ "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help && return 0
+   echo $_K_AD_HOME
+}
+
+_k_ad_src() {
+    local help="Show home path
+Usage) ${FUNCNAME}"
+    [ "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help && return 0
+   echo $_K_AD_HOME/ace.src
+}
+
+_k_ad_go_home() {
+    local help="Change path to ad home
+Usage) ${FUNCNAME}"
+    [ "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help && return 0
+   cd $_K_AD_HOME
+}
+
+_k_ad_go_src() {
+    local help="Change path to ad home
+Usage) ${FUNCNAME}"
+    [ "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help && return 0
+   cd $_K_AD_HOME/ace.src
+}
+
+_k_ad_co() {
+    local help="checkout ace source to _K_AD_HOME
+Usage) ${FUNCNAME}"
+    [ "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help && return 0
+   svn co svn+ssh://kage@home/export/svn/ace/trunk/ace $_K_AD_HOME
+}
+
+_k_ad_works_v1() {
+   local ace_home
+   find $_K_AD_HOME -type d -name "kage" -print -exec ls {} \;
+}
+
+_k_ad_works() {
+    local help="show working directory and files
+Usage) ${FUNCNAME}"
+    [ "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help && return 0
+   local ace_home 
+   for ace_src in $(find $(_k_ad_src) -type d -name "kage"); do
+        if (( $(ls $ace_src | wc -l 2>/dev/null ) > 0 )); then
+             echo "[ $ace_src ]"
+             ls $ace_src
+        fi
+   done
+}
+
+_k_ad_vi() {
+    local help="vi to source file
+Usage) ${FUNCNAME} <filename>"
+    [ "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help && return 0
+   local file ace_home work_dir
+   file=$1
+   [ -n "$file" ] || error_return "file not found" || return 1
+   ace_home=$(_k_ad_home)
+   work_dir=$(dirname $ace_home/$file)/kage
+
+   if [ -f $ace_home/$file ]; then
+       if [ -f $work_dir/$(basename $file) ]; then
+           cmp $work_dir/$(basename $file) $ace_home/$file >/dev/null || diff -up $ace_home/$file $work_dir/$(basename $file) | less
+           vi $work_dir/$(basename $file)
+           cmp $work_dir/$(basename $file) $ace_home/$file >/dev/null || diff -up $ace_home/$file $work_dir/$(basename $file) | less
+       else
+           [ -d $dirname $work_dir ] || mkdir -p $work_dir
+           \cp -a $ace_home/$file $work_dir/$(basename $file)
+           vi $work_dir/$(basename $file)
+           cmp $work_dir/$(basename $file) $ace_home/$file >/dev/null || diff -up $ace_home/$file $work_dir/$(basename $file) | less
+       fi
+   else
+       error_return "$file not found" || return 1
+   fi
+}
+
+_k_ad_ls() {
+    local help="show file list
+Usage) ${FUNCNAME} [<path>]"
+    [ "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help && return 0
+   local dir ace_home work_dir
+   dir=$1
+   [ -n "$dir" ] && ls $(_k_ad_home)/$dir || ls $(_k_ad_home)
+}
+
+_k_ad_diff() {
+    local help="show diff between work file and original file
+Usage) ${FUNCNAME} [<filename>]"
+    [ "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help && return 0
+   local ace_home file work_dir
+   file=$1
+
+   if [ -n "$file" ]; then
+     work_dir=$_K_AD_HOME/$(dirname $file)/kage
+     [ -f $_K_AD_HOME/$file ] || error_return "$file not found" || return 1
+     if [ -f $work_dir/$(basename $file) ]; then
+         diff -up $work_dir/$(basename $file) $_K_AD_HOME/$file
+     else
+         error_return "$file not worked" || return 1
+     fi
+   else
+     for ii in $(find $(_k_ad_home) -type d -name "kage" -print); do
+       for jj in $(ls $ii); do
+           if [ -f $(echo $ii | sed "s/kage$//g")/$jj ]; then  
+               echo
+               diff -up $ii/$jj $(echo $ii | sed "s/kage$//g")/$jj
+           else
+               echo
+               echo "$ii/$jj not found in SVN"
+           fi
+       done
+     done
+   fi
+}
+
+_k_ad_clean() {
+    local help="clean working file/directory
+Usage) ${FUNCNAME} [<filename>]"
+    [ "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help && return 0
+   local ace_home file work_dir ii
+   file=$1
+
+   if [ -n "$file" ]; then
+     work_dir=$_K_AD_HOME/$(dirname $file)/kage
+     if [ -f $work_dir/$(basename $file) ]; then
+         rm -rf $work_dir/$(basename $file)
+     fi
+   else
+     for ii in $(find $(_k_ad_home) -type d -name "kage"); do
+          [ -d $ii ] &&  rm -fr $ii
+     done
+   fi
+}
+
+_k_ad_sync() {
+    local help="sync from working files to original files
+Usage) ${FUNCNAME} [all]"
+    [ "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help && return 0
+   local ace_home opt ii jj src_dir
+   opt=$1
+   cd $(_k_ad_home)
+   echo
+   echo "work files diff"
+   _k_ad_diff | less
+   for ii in $(find $(_k_ad_home) -type d -name "kage" -print); do
+       cd $_K_AD_HOME
+       src_dir=$(echo $ii | sed  "s/\/kage$//g")
+       for jj in $(ls $ii); do
+         if [ -f $src_dir/$jj ]; then
+           if ! cmp $ii/$jj $src_dir/$jj >/dev/null; then
+               if [ "$opt" == "all" ]; then
+                   \mv  $ii/$jj $src_dir/$jj
+               else
+                   echo
+                   echo -n "Sync from $( echo $ii/$jj | sed "s#$_K_AD_HOME/##g") to $(echo $src_dir/$jj | sed "s#$_K_AD_HOME/##g")  ([y]/n)? "
+                   read y
+                   [ "$y" != "n" -a "$y" != "N" ] && \mv  $ii/$jj $src_dir/$jj
+               fi
+           fi
+         else
+               if [ "$opt" == "all" ]; then
+                   \mv  $ii/$jj $src_dir/$jj
+                   cd $src_dir
+                   svn add $jj
+                   cd - >/dev/null
+               else
+                   echo
+                   echo -n "Add from $( echo $ii/$jj | sed "s#$_K_AD_HOME/##g") to $(echo $src_dir/$jj | sed "s#$_K_AD_HOME/##g")  ([y]/n)? "
+                   read y
+                   if [ "$y" != "n" -a "$y" != "N" ]; then
+                       \mv  $ii/$jj $src_dir/$jj
+                       cd $src_dir
+                       svn add $jj
+                       cd - >/dev/null
+                   fi
+               fi
+         fi
+       done
+   done
+}
+
+_k_ad_commit() {
+    local help="commit to SVN
+Usage) ${FUNCNAME}"
+    [ "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help && return 0
+   echo
+   echo "SVN update"
+   cd $_K_AD_HOME
+   svn update
+
+   _k_ad_sync
+
+   cd $_K_AD_HOME
+   echo
+   echo "SVN DIFF"
+   echo
+   svn diff | less
+   echo
+   echo -n "SVN commit (y/[n]) ? "
+   read x
+   [ "$x" == "y" -o "$x" == "Y" ] && svn co
+}
+
+_k_ad_build() {
+    local help="manage ACE build server
+Usage) ${FUNCNAME}"
+    [ "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help && return 0
+  local auto_dir auto_build_menu x ii vbm help
+  declare -i x
+
+  vbm=$(which VBoxManage 2>/dev/null)
+
+  auto_build=/work/release/auto_ace_build_vm/build
+  auto_build_menu[0]="quit"
+  auto_build_menu[1]="Build history"
+  auto_build_menu[2]="ISO File history"
+  auto_build_menu[3]="working log"
+  auto_build_menu[4]="ACE_BUILD_O1541_R62"
+  auto_build_menu[5]="ACE_BUILD_MO1.5.3-3.0.0_R6.2"
+  while [ 1 ]; do
+  clear
+  echo 
+  echo "select menu : "
+  for ((ii=0;ii<${#auto_build_menu[*]};ii++)); do
+    echo "  $ii : ${auto_build_menu[$ii]}"
+  done
+  echo
+
+  echo -n "  which do you want ? "
+  read x
+
+  echo
+  [ "$x" == "0" ] && return 0
+  if [ "$x" == "1" ]; then
+      echo "ACE history"
+      cat /work/release/auto_ace_build_vm/auto_build_history.log | less
+  elif [ "$x" == "2" ]; then
+      echo "ISO history"
+      cat /work/release/auto_ace_build_vm/auto_build_iso_history.log | less
+  elif [ "$x" == "3" ]; then
+      [ -f /work/release/auto_ace_build_vm/make.log ] && tail -f /work/release/auto_ace_build_vm/make.log
+  elif [ -f $auto_build.lock ]; then
+      echo "Still working.... now"
+      sleep 5
+  elif (( $x > 3 && $x < ${#auto_build_menu[*]} )); then
+      echo "Set build to ${auto_build_menu[$x]} server"
+      [ -d $(dirname $auto_build) ] && echo "${auto_build_menu[$x]}" > $auto_build || error_return  "$(dirname $auto_build) not found" || return 1
+      sleep 5
+  else
+      echo "Unknown command $(x)"
+      sleep 5
+  fi
+  done
+}
+
+_k_ad_build_v2() {
+  local auto_dir auto_build_menu x ii vbm
+  declare -i x
+
+  vbm=$(which VBoxManage 2>/dev/null)
+
+  auto_build=/work/release/auto_ace_build_vm/build
+  auto_build_menu[0]="quit"
+  auto_build_menu[1]="builded history log"
+  auto_build_menu[2]="ACE_BUILD_O1541_R62"
+  auto_build_menu[3]="ACE_BUILD_MO1.5.3-3.0.0_R6.2"
+  while [ 1 ]; do
+  clear
+  echo
+  echo "select menu : "
+  for ((ii=0;ii<${#auto_build_menu[*]};ii++)); do
+    echo "  $ii : ${auto_build_menu[$ii]}"
+  done
+  echo
+
+  echo -n "  which do you want ? "
+  read x
+
+  echo
+  [ "$x" == "0" ] && return 0
+  if [ "$x" == "1" ]; then
+      echo
+      echo "ACE history"
+      echo
+      cat /work/release/auto_ace_build_vm/auto_build_history.log | less
+      echo
+      echo "ISO history"
+      echo
+      cat /work/release/auto_ace_build_vm/auto_build_iso_history.log | less
+  elif [ -f $auto_build.lock ]; then
+      echo "Still working.... now"
+      sleep 5
+  elif (( $x > 1 && $x < ${#auto_build_menu[*]} )); then
+##################################################################
+# start vbox
+##################################################################
+
+      if [ "$(id -u)" == "0" ]; then
+          if [ "$(su - kage vboxmanage showvminfo ${auto_build_menu[$x]} | grep "^State" | awk '{print $2}')" != "running" ]; then
+               su - kage vboxmanage startvm ${auto_build_menu[$x]}
+          fi
+      else
+          k vbox_state ${auto_build_menu[$x]} || k vbox_power ${auto_build_menu[$x]} on
+      fi
+      for ((ii=0; ii<600; ii++)); do
+                ping -c 3 ${auto_build_menu[$x]} >/dev/null && break
+                sleep 2
+      done
+      for ((ii=0; ii<300; ii++)); do
+          disk_size=$(ssh -o ConnectTimeout=5 r62_o1541 df -h /work | grep "/work$" | awk '{ print$4}' | sed "s/%//g" 2>/dev/null)
+          [ -n "$disk_size" ] && break
+          sleep 2
+      done
+
+      [ -n "$disk_size" ] || error_return "Can't found working directory in ${auto_build_menu[$x]} server" || return 1
+      if (( $disk_size > 97 )); then
+           error_return "No more disk space at ${auto_build_menu[$x]} working directory" || return 1
+      fi
+      sleep 60
+##################################################################
+      echo "Set build to ${auto_build_menu[$x]} server"
+      [ -d $(dirname $auto_build) ] && echo "${auto_build_menu[$x]}" > $auto_build || error_return  "$(dirname $auto_build) not found" || return 1
+      sleep 5
+##################################################################
+# finish build
+# stop vbox
+# su - kage vboxmanage controlvm ${auto_build_menu[$x]} poweroff
+##################################################################
+  else
+      echo "Unknown command $(x)"
+      sleep 5
+  fi
+  done
+}

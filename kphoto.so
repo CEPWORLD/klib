@@ -1,0 +1,342 @@
+#$version$: 0.5.40
+iphoto_dir="/Users/kage/Pictures/iPhoto Library.photolibrary/Masters"
+photo_stream_dir="/Users/kage/Library/Application Support/iLifeAssetManagement/assets/sub"
+photo_dir=/Volumes/data2/photo/photostream/Photos
+video_dir=/Volumes/data2/photo/photostream/Videos
+#photo_dir=/Volumes/data2/photo/photo_sync/Photos
+#video_dir=/Volumes/data2/photo/photo_sync/Videos
+trash_dir=/Volumes/data2/photo/bin/kphoto_trash/$(date +%Y%m%d_%H%M%S)
+dtrash_dir=/Volumes/data2/photo/bin/kphoto_trash/duplicate_photo
+jhead_bin=/Volumes/data2/photo/bin/jhead
+jpeginfo_bin=/Volumes/data2/photo/bin/jpeginfo
+work_tmp_dir=~/temp/kphoto_duplicate_$(mktemp -u XXXXXX)
+photo_works="/Volumes/data2/고미영/사진/stream"
+mode=10m
+
+[ -d $trash_dir ] || mkdir -p $trash_dir
+
+if [ "$(uname -s)" != "Darwin" ]; then
+   echo "Currently it defined to MAC OS X"
+   exit 1
+fi
+
+_clean_up() {
+    if [ -d $trash_dir ]; then
+        size=$(du -s $trash_dir | awk '{print $1}')
+        [ "$size" == "0" ] && rmdir $trash_dir
+    fi
+}
+
+trap _clean_up EXIT
+
+error_exit() {
+   echo "$*"
+   exit 
+}
+
+find_date_jpg() {
+    local date_dir_arr file_name
+    file_name="$1"
+    [ -f "$file_name" ] || return 1
+    date_dir_arr=($($jhead_bin "$file_name" 2>/dev/null | grep "^Date" | awk '{print $3}' | sed -e "s/:/ /g" -e "s/-/ /g"))
+    (( ${#date_dir_arr[*]} == 0 )) && return 1
+    echo "${date_dir_arr[0]}/${date_dir_arr[1]}"
+    return 0
+}
+
+find_date_file() {
+    local file_name
+    file_name="$1"
+    [ -f "$file_name" ] || return 1
+    #echo $(date -j -f "%b %d %T %Y" "$(stat -f "%Sm" "$file_name")" "+%Y/%m")
+    echo $(stat -f "%Sm" -t "%Y/%m" "$file_name")
+    return 0
+}
+
+_mv() {
+    local src dest new_dest_file mdir md5sum
+    src="$1"
+    dest="$2"
+    [ "$src" == "$dest" ] && return 1 
+    lsof "$src" >& /dev/null && return 1
+    (( $(stat -f %z "$src") < 1 )) && return 1
+
+    if [ -f "$(dirname "$dest")" ]; then
+        [ -d "$photo_works" ] || mkdir -p "$photo_works"
+        mv "$(dirname "$dest")" "$photo_works"
+    fi
+    [ -d "$(dirname "$dest")" ] || mkdir -p "$(dirname "$dest")"
+    if [ -f "$dest" ]; then
+        if cmp "$src" "$dest" >& /dev/null; then
+           md5sum=($(md5 "$src"))
+           mdir=${md5sum[${#md5sum[*]}-1]}
+           echo "Same file($src<=>$dest), move to $dtrash_dir/$mdir"
+           [ -d "$dtrash_dir/$mdir" ] || mkdir -p "$dtrash_dir/$mdir"
+           mv "$src" "$dtrash_dir/$mdir"
+        else
+           new_dest_file="$(dirname "$dest")/$(mktemp -u XXXXX).$(basename "$dest")"
+           echo "move $src to $new_dest_file"
+           mv "$src" "$new_dest_file"
+           chmod g+rw "$new_dest_file"
+        fi
+    else
+        echo "move $src to $dest"
+        mv "$src" "$dest"
+        chmod g+rw "$dest"
+    fi
+}
+
+_cp() {
+    local src dest new_dest_file mdir md5sum
+    src="$1"
+    dest="$2"
+
+    [ -f "$src" ] || return 1
+    [ "$src" == "$dest" ] && return 1 
+    lsof "$src" >& /dev/null && return 1
+    (( $(stat -f %z "$src") < 1 )) && return 1
+
+    [ -d "$(dirname "$dest")" ] || mkdir -p "$(dirname "$dest")"
+
+    if [ -f "$dest" ]; then
+        if cmp "$src" "$dest" >& /dev/null; then
+           md5sum=($(md5 "$src"))
+           mdir=${md5sum[${#md5sum[*]}-1]}
+           echo "Same file($src<=>$dest), move to $dtrash_dir/$mdir"
+           [ -d "$dtrash_dir/$mdir" ] || mkdir -p "$dtrash_dir/$mdir"
+           mv  "$src" "$dtrash_dir/$mdir"
+        else
+           new_dest_file="$(dirname "$dest")/$(mktemp -u XXXXX).$(basename "$dest")"
+           echo "copy $src to $new_dest_file"
+           cp -a "$src" "$new_dest_file"
+           chmod g+rw "$new_dest_file"
+        fi
+    else
+        echo "copy $src to $dest"
+        cp -a "$src" "$dest"
+        chmod g+rw "$dest"
+    fi
+}
+
+find_bad_jpg() {
+    local file_name 
+    file_name="$1"
+    file "$file_name" | grep JPEG >& /dev/null || return 0
+    if $jpeginfo_bin -cv "$file_name" | grep "ERROR" >/dev/null; then
+        echo "Find Bad file($file_name)"
+        _mv "$file_name" "$trash_dir/$(basename "$file_name")"
+        return 1
+    fi
+    return 0
+}
+
+file_type() {
+    local file_name
+    file_name="$1"
+    [ -f "$file_name" ] || return 1
+    if file "$file_name" | grep -i -e video -e movie >& /dev/null; then
+       echo mov
+    elif file "$file_name" | grep -i image >& /dev/null; then
+       echo jpg
+    else
+       echo file
+    fi
+    return 0
+}
+
+sync_stream2photo() {
+    local count err_count file_name cmd
+    cd "$photo_stream_dir"
+
+    count=0
+    err_count=0
+
+    [ "$mode" ] && date_mode="-ctime -$mode"
+    find . -type f $date_mode | while read file_name; do
+        file_type=$(file_type "$file_name") || return 1
+        if [ "$file_type" == "jpg" ]; then
+            find_bad_jpg "$file_name" || continue
+            date_dir=$(find_date_jpg "$file_name") || date_dir=$(find_date_file "$file_name")        
+            dest_dir="$photo_dir/$date_dir"
+            if ! _cp "$file_name" "$dest_dir/$(basename "$file_name")"; then
+                echo "Same file ($file_name), so skip"
+                continue
+            fi
+        elif [ "$file_type" == "file" ]; then
+            echo "$file_name is not photo or movie file, so move to $trash_dir"
+            if ! _mv "$file_name" "$trash_dir/$(basename "$file_name")"; then
+                echo "Same file ($file_name), so skip"
+                continue
+            fi
+        else
+            echo "$file_name ??"
+        fi
+    done
+}
+
+
+fix2date_dir() {
+    local chk_date file_name date_dir_arr fname  chk cmd
+    chk_date="$1"
+    file_name="$2"
+    cmd="$3"
+    [ -n "$cmd" ] || cmd=_mv
+
+    file_type=$(file_type "$file_name") || return 1
+
+    if [ "$file_type" == "mov" ]; then
+        #Movie
+        date_dir=$(find_date_file "$file_name")
+        [ -d "$video_dir/$date_dir" ] || mkdir -p "$video_dir/$date_dir"
+        if ! $cmd "$file_name" "$video_dir/$date_dir/$(basename "$file_name")"; then
+             echo "Same file ($file_name), so skip"
+             continue
+        fi
+
+    elif [ "$file_type" == "jpg" ]; then
+        #Photo
+        find_bad_jpg "$file_name" || return 1
+
+        date_dir=$(find_date_jpg "$file_name") || date_dir=$(find_date_file "$file_name")
+
+        if [ "$date_dir" != "$chk_date" ]; then
+            [ -d "$photo_dir/$date_dir" ] || mkdir -p "$photo_dir/$date_dir"
+            if ! $cmd "$file_name" "$photo_dir/$date_dir/$(basename "$file_name")"; then
+                echo "Same file ($file_name), so skip"
+                continue
+            fi
+        fi
+    else
+        echo "$file_name is not photo or movie file, so move to $trash_dir"
+        if ! $cmd "$file_name" "$trash_dir/$(basename "$file_name")"; then
+             echo "Same file ($file_name), so skip"
+             continue
+        fi
+    fi
+}
+
+move_to_stream() {
+    local cur_path org_dir
+    org_dir=$(pwd)
+    cur_path="$1"
+    dest_path=$(cd $cur_path && pwd)
+    find $dest_path -type f | while read line; do
+        fix2date_dir "" "$line" 
+    done
+}
+
+copy_to_stream() {
+    local cur_path org_dir
+    org_dir=$(pwd)
+    cur_path="$1"
+    dest_path=$(cd $cur_path && pwd)
+    find $dest_path -type f | while read line; do
+        fix2date_dir "" "$line" "_cp"
+    done
+}
+
+
+find_duplicate() {
+    local work_dir worked_file_num worked_file_num_cur err ii orig_file_num  mfile md5sum cnt rcnt skip_file mdir
+    echo "Start duplication find"
+    work_dir="$*"
+    [ -d $dtrash_dir ] || mkdir -p $dtrash_dir
+    if [ -f $trash_dir ]; then
+        mv $trash_dir $trash_dir.111
+        [ -d $trash_dir ] || mkdir -p $trash_dir
+        mv $trash_dir.111 $trash_dir
+    else
+        [ -d $trash_dir ] || mkdir -p $trash_dir
+    fi
+    sleep 2
+    [ -n "$work_dir" ] || error_exit "$(basename $0) <work_dir> [<work_dir2>] ..."
+    for ii in $work_dir; do
+       [ -d $ii ] || error_exit "$ii directory not found"
+    done | tee -a $trash_dir/duplicate.log
+
+    [ -d /tmp/auto_sync_temp ] || mkdir -p /tmp/auto_sync_temp
+
+    echo "Checking file list"
+    orig_file_num=$(find $work_dir -type f | wc -l | sed "s/ //g")
+
+    (
+    echo 
+    echo "work dir : $work_dir"
+    echo "Current dir : $(pwd)"
+    echo "temp dir : $work_tmp_dir"
+    echo "Trash dir : $trash_dir"
+    echo "Duplicate Trash dir : $dtrash_dir"
+    echo "File list : $orig_file_num"
+    sleep 10 
+    ) | tee -a $trash_dir/duplicate.log
+
+    cnt=0
+    rcnt=$orig_file_num
+    skip_file=0
+    echo "make a finger print"
+    find $work_dir -type f | while read line; do
+        if echo "$line" | grep -e "/.cedata/" -e "/.cedata$" -e "/.ceid" -e ".DS_Store$" -e ".DS_Store/" -e ".log$" -e ".txt$"  >& /dev/null; then
+            skip_file=$((skip_file+1))
+            echo "($skip_file/$rcnt) SKIP $line"
+            echo "$skip_file" > $trash_dir/skip.log
+            continue
+        fi
+        if file "$line" | grep -e "ASCII text$" -e "V2 Document" >& /dev/null; then
+            echo "($cnt/$rcnt) move $line (ASCII/Non photo or Video) => $trash_dir"
+            _mv "$line" "$trash_dir"
+            rcnt=$(($rcnt-1))
+            cnt=$(($cnt+1))
+            continue
+        fi
+        md5sum=($(md5 "$line"))
+        mdir=${md5sum[${#md5sum[*]}-1]} 
+        mfile="$(echo $line | sed "s/^MD5 (//g" | awk -F= '{print $1}')"
+        echo "($cnt/$rcnt) $mdir $mfile"
+        [ -d "$work_tmp_dir/$mdir" ] || mkdir -p "$work_tmp_dir/$mdir"
+        echo "$mfile" >> $work_tmp_dir/$mdir/list.txt
+        rcnt=$(($rcnt-1))
+        cnt=$(($cnt+1))
+    done | tee -a $trash_dir/duplicate.log
+
+    worked_file_num=$(ls $work_tmp_dir | wc -l |sed "s/ //g")
+    worked_file_num_cur=1
+    err=0
+    echo " Work.."
+    find $work_tmp_dir -type d -depth 1 | while read line; do
+         _remain_file "$line" "(W:$worked_file_num_cur E:$err/$worked_file_num)"
+         cat $line/list.txt | sort | uniq | while read fline; do
+                 [ -f "$dtrash_dir/$(basename $line)/$(basename "$fline")" ] &&  del_file_name="$dtrash_dir/$(basename $line)/$(mktemp -u XXXXX).$(basename "$fline")" || del_file_name="$dtrash_dir/$(basename $line)/$(basename "$fline")"
+                 if _mv "$fline" "$del_file_name"; then
+                     echo "($worked_file_num_cur/$worked_file_num) Remove $fline => $del_file_name" | tee -a $trash_dir/del_list.txt 
+                 else
+                     err=$(($err+1))
+                     echo "$err" > $trash_dir/err.log
+                     echo "($err/$worked_file_num) ERR: $fline => $del_file_name)" | tee -a $trash_dir/del_list.txt 
+                 fi
+         done
+         worked_file_num_cur=$(($worked_file_num_cur+1))
+         err=$([ -f $trash_dir/err.log ] && cat $trash_dir/err.log || echo 0)
+
+    done | tee -a $trash_dir/duplicate.log
+    rm -fr $work_tmp_dir
+
+    echo
+    [ -f $trash_dir/skip.log ] && skip_file=$(cat $trash_dir/skip.log) || skip_file=0
+    [ -f $trash_dir/err.log ] && err=$(cat $trash_dir/err.log) || err=0
+    echo "working : $orig_file_num => $worked_file_num ( Total: $orig_file_num, Remained : $worked_file_num, Removed : $(( $orig_file_num - $worked_file_num )), ERR file : $err, SKIP : $skip_file )" | tee -a $trash_dir/duplicate.log
+}
+
+_remain_file() {
+    local line remain_line count
+    line="$1"
+    count="$2"
+    remain_line=$(grep -vn "[(|)| ]" $line/list.txt | head -n1)
+    [ -n "$remain_line" ] || remain_line=$(grep -vn "[(|)]" $line/list.txt | head -n1)
+    [ -n "$remain_line" ] || remain_line="1:$(head -n1 $line/list.txt)"
+    del_line=$(echo "$remain_line"| awk -F: '{print $1}')
+    sed -i '' ${del_line}d $line/list.txt
+    echo "$count Remain : $(echo "$remain_line" | awk -F: '{print $2}')"
+}
+
+#sync_stream2photo
+#find_duplicate $*

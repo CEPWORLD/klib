@@ -1,0 +1,134 @@
+#Kage Library
+#$lib_ver$:0.0.61
+#   . $(dirname $0)/klib.so
+#_k_log(){
+#}
+#_k_log_close(){
+#}
+
+_k_loaded_log(){
+   local null
+}
+
+_k_log_help() {
+   echo "Logging library"
+}
+
+_k_log_logging() {
+    local opt opt_arr file append file screen syslog daemon chk
+    if (( $# > 0 )); then
+        opt_arr=($*)
+        file=${opt_arr[${#opt_arr[*]}-1]}
+    fi
+
+    for ((ii=0; ii<${#opt_arr[*]}; ii++)); do
+       if [ "${opt_arr[$ii]}" == "-a" ]; then
+           append=1
+       elif [ "${opt_arr[$ii]}" == "-f" ]; then
+           file=1
+       elif [ "${opt_arr[$ii]}" == "-s" ]; then
+           screen=1
+       elif [ "${opt_arr[$ii]}" == "-l" ]; then
+           syslog=1
+       elif [ "${opt_arr[$ii]}" == "-d" ]; then
+           daemon=1
+       fi
+    done
+    if (( $# < 1 )); then
+       screen=1
+       syslog=1
+       daemon=0
+       file=0
+       append=0
+    fi
+
+    #if [ "$#" == "1" -o "$daemon" == "1" ]; then
+    if [ "$daemon" == "1" ]; then
+        npipe=/tmp/$$.$(mktemp -u XXXXXXX)
+        trap "rm -f $npipe" EXIT
+        mknod $npipe p || return 1
+        tee -a <$npipe $file &
+        exec 1>&-
+        exec 1>$npipe
+    else
+        [ "$syslog" != "1" -a "$screen" == "1"  -a "$file" == "1" ] && error_exit "option fail"
+        {
+        chk=1
+        while read -t 5 line; do
+            chk=0
+            [ "$file" == "1" ] || echo "$line"
+            if [ "$screen" != "1" ]; then
+                if [ "$append" == "1" ]; then
+                    echo "$line" >> $file
+                else
+                    echo "$line" > $file
+                fi
+            fi
+            [ "$syslog" == "1" ] && logger "$line"
+        done 
+        [ "$chk" == "1" ] && return 1 
+        }
+    fi
+    return 0
+}
+
+_k_log_logging_old() {
+    local file opt
+    file=$1
+    opt=$2
+    [ -n "$file" ] || error_exit "logging <file> <option>"
+    if [ "$opt" == "file" ]; then
+        exec >> $file 2>&1
+    else
+        [ "$opt" == "-n" ] && tee_opt="" || tee_opt="-a"
+        # both ( file & screen )
+        npipe=/tmp/$$.tmp
+        trap "rm -f $npipe; killall -9 tee" EXIT SIGHUP SIGINT SIGTERM
+        mknod $npipe p
+        tee $tee_opt <$npipe $file &
+        exec 1>&-
+        exec 1>$npipe
+        exec 2>&1
+    fi
+}
+
+_k_log_rotate() {
+   local logfile num size get_num num_arr 
+   logfile=$1
+   size=$2
+   num=$3
+
+   [ -n "$logfile" ] || error_exit "_k_log_rotate> input not found"
+   [ -n "$num" ] || num=1
+   [ -n "$size" ] || size=5000000
+   [ -f $logfile ] || touch $logfile
+
+   if (( $(stat -c %s $logfile) > $size )); then
+      if ls ${logfile}.* 2>/dev/null; then
+        num_arr=( $(ls -tr ${logfile}.* | tail -n 1 | sed "s/\./ /g") )
+        get_num=${num_arr[$((${#num_arr[*]}-1))]}
+        [ "$get_num" == "log" ] && get_num=0
+      else
+        get_num=0
+      fi
+      (( $get_num >= $num )) && get_num=0
+      mv $logfile ${logfile}.$(( $get_num + 1 ))
+      touch $logfile
+      echo "$(date '+%Y-%m-%d %H:%M:%S') : $(basename $0) : log rate : $*"  >> $logfile
+   fi
+}
+
+_k_log_set() {
+  set +u
+}
+
+_k_log_unset() {
+  set -x
+}
+
+_k_log_delay() {
+    echo ""
+    echo $@
+    echo ""
+    sleep 5
+}

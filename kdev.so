@@ -1,0 +1,571 @@
+#Kage Library  - dev
+
+#$lib_ver$:0.0.36
+#_k_dev(){
+#}
+#_k_dev_close(){
+#}
+error_return() {
+    echo "$*"
+    return 1
+}
+
+_k_dev_help() {
+   local help="library dev's help"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   echo "Device library
+  - gnbd, cow, loop mapper
+  - hdd, usb
+  - raid controller
+"
+}
+     
+_k_loaded_dev(){
+   local null
+}
+
+_k_dev_get_removable_usb() {
+   local help="Get USB device name"
+   [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+   echo $(cd /sys/block && for i in * ; do   if [ -f $i/removable ]; then  [ "$(cat $i/removable)" == "1" ] && echo $i | grep "sd[a-z]";   fi; done)
+}
+
+_k_dev_find_all_usb() {
+    local model vendor
+    model=$@
+#    vendor=$@
+
+    dev_path=/sys/class/block
+    cd $dev_path && ls -l sd[a-z] hd[a-z] 2>/dev/null | grep "/usb" | while read line; do
+       usb_dev=( $line )
+       usb_dev_name=$(basename $(echo ${usb_dev[$((${#usb_dev[*]}-1))]}))
+       if [ -n "$vendor" ]; then
+           [ "$(cat $dev_path/$usb_dev_name/device/vendor)" == "$vendor" ] && echo $usb_dev_name:$(echo $(ls $dev_path/$usb_dev_name | grep "$usb_dev_name") |sed "s/ /:/g")
+       elif [ -n "$model" ]; then
+           [ "$(cat $dev_path/$usb_dev_name/device/model)" == "$model" ] && echo $usb_dev_name:$(echo $(ls $dev_path/$usb_dev_name | grep "$usb_dev_name") |sed "s/ /:/g")
+       else
+           echo $usb_dev_name:$(echo $(ls $dev_path/$usb_dev_name | grep "$usb_dev_name") |sed "s/ /:/g")
+       fi
+    done
+}
+
+_k_dev_remove_mbr() {
+  local DEV
+  DEV=$1
+  [ -n "$DEV" ] || error_return "_k_dev_remove_mbr <dev>"
+  dd if=/dev/zero of=$DEV bs=512 count=1
+}
+
+_k_dev_make_blank_dev() {
+  local count sizemb DEV blocksize count_unit
+  DEV=$1
+  counts=$2
+  blocksize=$3
+  [ -n "$blocksize" ] || blocksize=1024
+  [ ! -n "$DEV" -o ! -n "$count" ] && error_return "_k_dev_make_blank <dev> <num of blocks> [<block size(KB):default 1024>]"
+  dd if=/dev/zero of=$DEV bs=${blocksize}KB count=$counts
+}
+
+_k_dev_gnbd_get_dev_v1() {
+   local name=$1
+   local z
+   [ -n "$name" ] || error_return "_k_dev_get_gnbd <gnbd name>"
+   cd /sys/class/gnbd && \
+   for z in *; do
+     if [ "$name" == "$(cat $z/name)" ]; then
+      echo $z
+      break
+     fi
+   done
+   echo
+   cd - > /dev/null 2>&1
+}
+
+_k_dev_gnbd_get_dev() {
+   local name gnbd_name
+   name=$1
+   [ -n "$name" ] || error_return "_k_dev_get_gnbd <gnbd name>" || return 1
+   [ -d /sys/class/gnbd ] || error_return "GNBD not found" || return 1
+   gnbd_name=( $(grep "^$name$" /sys/class/gnbd/*/name | sed "s#/# #g") )
+   (( ${#gnbd_name[*]} > 1 )) &&  echo ${gnbd_name[3]} || return 1
+}
+
+_k_dev_gnbd_close() {
+   local gnbd_name
+   gnbd_name=$1
+   [ -n "$gnbd_name" ] || error_return "gnbd_name not found" || return 1
+   gnbd_export -O -r $gnbd_name
+}
+
+_k_dev_gnbd_close_all() {
+   gnbd_export -O -R
+}
+
+_k_dev_gnbd_export() {
+   local gnbd_device gnbd_name gnbd_opt
+   gnbd_device=$1
+   gnbd_name=$2
+   gnbd_opt=$3
+   [ -n "$gnbd_device" ] || error_return "_k_dev_export_gnbd <gnbd_device> <gnbd_name> [<gnbd_opt:default -o>]" || return 1
+   [ -n "$gnbd_name" ] || error_return "_k_dev_export_gnbd <gnbd_device> <gnbd_name> [<gnbd_opt:default -o>]" || return 1
+   [ -n "$gnbd_opt" ] || gnbd_opt="-o" 
+   gnbd_export $gnbd_opt -c -d /dev/$gnbd_device -e $gnbd_name
+}
+
+_k_dev_gnbd_exported_list() {
+   local GNBD_DIR
+   GNBD_DIR=$1
+   [ -n "$GNBD_DIR" ] || GNBD_DIR=/var/run/gnbd
+   [ -d "$GNBD_DIR" ] || error_return "$GNBD_DIR not found" || return 1
+   export GNBD_PROGRAM_DIR=$GNBD_DIR
+   gnbd_export -l
+}
+
+_k_dev_gnbd_client_list() {
+   local GNBD_DIR
+   GNBD_DIR=$1
+   [ -n "$GNBD_DIR" ] || GNBD_DIR=/var/run/gnbd
+   [ -d "$GNBD_DIR" ] || error_return "$GNBD_DIR not found" || return 1
+   export GNBD_PROGRAM_DIR=$GNBD_DIR
+   gnbd_export -L
+}
+
+_k_dev_gnbd_import() {
+    local gnbd_name gnbd_server
+    gnbd_server=$1
+    gnbd_name=$2
+    [ -n "$gnbd_server" ] || error_return "gnbd_server not found" || return 1
+    [ -n "$gnbd_name" ] || error_return "gnbd_name not found" || return 1
+    if ping -c 3 $gnbd_server >/dev/null; then
+         gnbd_import -n -i $gnbd_server -I $gnbd_name 
+         gnbd_device=$(_k_dev_gnbd_get_dev $gnbd_name)
+         [ -n "$gnbd_device" ] && echo $gnbd_device || error_return "Unable to get GNBD device for $gnbd_name" || return 1
+    else
+         error_return "gnbd_server ($gnbd_server) down" || return 1
+    fi
+    return 0
+}
+
+_k_dev_gnbd_client_close() {
+   local gnbd_name
+   gnbd_name=$1
+   [ -n "$gnbd_name" ] || error_return "gnbd_name not found" || return 1
+   gnbd_import -n -r $gnbd_name
+}
+
+_k_dev_gnbd_connect_server() {
+   local gnbd_server
+   gnbd_server=$1
+   [ -n "$gnbd_server" ] || error_return "gnbd_server not found" || return 1
+
+   gnbd_import -n -i $gnbd_server
+}
+
+_k_dev_gnbd_imported_list() {
+   gnbd_import -n -l
+}
+
+_k_dev_gnbd_get_imported_names_v1() {
+    local name z
+    cd /sys/class/gnbd && \
+    for z in *; do
+        name=$(cat $z/name)
+        connected=$(cat $z/connected)
+        [ -n "$name" -a "$connected" == "1" ] && echo $name
+    done
+    cd - > /dev/null 2>&1
+}
+
+_k_dev_gnbd_get_imported_names() {
+    _k_dev_gnbd_imported_list | grep "^Device name" | awk '{print $4}'
+}
+
+_k_dev_gnbd_relaied_list() {
+   local GNBD_DIR
+   GNBD_DIR=$1
+   [ -n "$GNBD_DIR" ] || GNBD_DIR=/var/run/gnbd.$(hostname)
+   [ -d "$GNBD_DIR" ] || error_return "$GNBD_DIR not found" || return 1
+   export GNBD_PROGRAM_DIR=$GNBD_DIR
+   gnbd_export -l
+}
+
+_k_dev_gnbd_relaied_client_list() {
+   local GNBD_DIR
+   GNBD_DIR=$1
+   [ -n "$GNBD_DIR" ] || GNBD_DIR=/var/run/gnbd.$(hostname)
+   [ -d "$GNBD_DIR" ] || error_return "$GNBD_DIR not found" || return 1
+   export GNBD_PROGRAM_DIR=$GNBD_DIR
+   gnbd_export -L
+}
+
+_k_dev_gnbd_relay() {
+   local GNBD_DIR gnbd_server gnbd_name gnbd_device
+   gnbd_server=$1
+   GNBD_DIR=$2
+   [ -n "$gnbd_server" ] || error_return "gnbd_server not found" || return 1
+   [ -n "$GNBD_DIR" ] || GNBD_DIR=/var/run/gnbd.$(hostname)
+   [ -d $GNBD_DIR ] || mkdir -p $GNBD_DIR
+   export GNBD_PROGRAM_DIR=$GNBD_DIR
+
+   if ! ps -e | grep gnbd_serv >/dev/null 2>&1; then
+      gnbd_serv -n
+      sleep 3
+      _k_dev_gnbd_connect_server $gnbd_server
+   fi
+
+#   _k_dev_gnbd_connect_server $gnbd_server
+
+   for gnbd_name in $(_k_dev_gnbd_get_imported_names); do
+       if ! gnbd_export -l | grep "^Server" | grep $gnbd_name >/dev/null; then
+           gnbd_device=$(_k_dev_gnbd_get_dev $gnbd_name)
+           gnbd_export -o -c -d /dev/$gnbd_device -e $gnbd_name || error_return "unable to export $gnbd_device as $gnbd_name" || return 1
+       fi
+   done
+}
+
+_k_dev_gnbd_clean() {
+   local get_gnbd_names gnbd_name $gnbd_server
+   gnbd_server=$1
+   shift 1
+   get_gnbd_names="$*"
+   [ -n "$gnbd_names" ] || error_return "gnbd_names not found" || return 1
+ 
+   # clean
+   for gnbd_name in $(_k_dev_gnbd_get_imported_names); do
+        if ! echo $get_gnbd_names | sed "s/ /\n/g" | grep $gnbd_name >/dev/null; then
+             _k_dev_gnbd_client_close $gnbd_name
+        fi
+   done
+
+   #import and relay
+   for gnbd_name in $get_gnbd_names; do
+       if ! gnbd_import -nl | grep "^Device name" | awk '{print $4}' | grep "^$gnbd_name$"  >/dev/null; then
+           _k_dev_gnbd_import $gnbd_server $gnbd_name
+       fi
+   done
+
+   _k_dev_gnbd_relay $gnbd_server 
+}
+
+
+_k_dev_cow_close_all() {
+   local cow_dev
+   cowsync
+   for cow_dev in $(cowdev -l | grep -w "^/dev" | awk '{print $1}'); do
+      cowctl -c $cow_dev
+      cowdev -d $cow_dev
+   done
+}
+
+_k_dev_cow_close() {
+   local cow_dev
+   cow_dev=$1
+   cowsync
+   cowsync
+   cowctl -c $cow_dev
+   cowdev -d $cow_dev
+}
+
+_k_dev_cow_open() {
+   local force cow_file src_file
+   src_file=$1
+   cow_file=$2
+   force=$3
+   [ "$force" == "-f" ] && cowrepair -f $cow_file
+   cowdev -a $src_file $cow_file 
+}
+
+_k_dev_create_cow_dev() {
+  COWMAJOR=241
+  mknod /dev/cowctl b $COWMAJOR 255
+  chmod o= /dev/cowctl
+  mkdir /dev/cow
+  mknod /dev/cow/ctl b $COWMAJOR 255
+  chmod o= /dev/cow/ctl
+  for((i=0; i<=254; i++)); do
+    mknod /dev/cow/$i b $COWMAJOR $i >/dev/null 2>&1
+    chmod o= /dev/cow/$i >/dev/null 2>&1
+  done
+  if ! lsmod | grep "^cowloop " >& /dev/null; then
+    modprobe cowloop maxcows=254 
+  fi
+}
+
+_k_dev_3ware_create() {
+    C_PORT=$(tw_cli info |grep "^c[0-9]"| awk '{print $1}')
+    C_RAID=$(tw_cli /${C_PORT} show all | grep RAID-5 | awk '{print $1}')
+
+    echo "Create new raid"
+    tw_cli /${C_PORT} add type=raid$_raid disk=1-3 storsave=balance noqpolicy
+}
+
+_k_dev_3ware_check() {
+   C_PORT=$(/opt/ace/sbin/tw_cli info |grep "^c[0-9]"| awk '{print $1}')
+   tw_cli /${C_PORT} show all
+}
+
+_k_dev_3ware_del() {
+    C_PORT=$(tw_cli info |grep "^c[0-9]"| awk '{print $1}')
+    C_RAID=$(tw_cli /${C_PORT} show all | grep RAID-5 | awk '{print $1}')
+    echo "Delete exist raid"
+    echo Y | tw_cli /${C_PORT}/${C_RAID} del
+}
+
+_k_dev_areca_check() {
+    cli64 disk info
+    cli64 rsf info raid=1
+    cli64 vsf info vol=1
+}
+
+_k_dev_areca_del() {
+    #Delete raid6 with drive 9~24 (16 drives)
+    cli64 set curctrl=1 password=0000
+    cli64 rsf delete raid=1
+}
+
+_k_dev_areca_create() {
+    #Create raid6 with drive 9~24 (16 drives)
+    cli64 set curctrl=1 password=0000
+    cli64 rsf create drv=9~24 name=RaidSet1
+    cli64 vsf create raid=1 level=6 stripe=64 fginit=N
+}
+
+_k_dev_create_snapfile() {
+    local seek image_file snap_file
+    image_file=$1
+    snap_file=$2
+    [ ! -n "$image_file" -o ! -n "$snap_file" ] && error_exit "input not found"
+    [ -f $image_file ] || error_exit "$image_file not found"
+    dd if=/dev/zero of=$snap_file bs=1 seek=$(($(stat -c %s $image_file)-4)) count=4 > /dev/null 2>&1 || error_exit "Fail to create snap file"
+}
+
+_k_dev_find_img() {
+    local file dev
+    file=$1
+    #dev=$(losetup -a | grep "/$file)" | awk -F: '{print $1}')
+    dev=$(losetup -a | awk -v find="($file)" '{if($3 == find) print $1}' | sed "s/://g")
+    if [ -n "$dev" ]; then
+        echo $dev
+        return 0 
+    else
+        return 1
+    fi
+}
+
+_k_dev_load_img() {
+    local file opt free_dev
+    file=$1
+    opt=$2
+    [ "$opt" == "-r" ] || opt=""
+#    [ "$opt" == "-w" ] || opt="-r"
+    for ((i=0;i<10;i++)); do
+        free_dev=$(losetup -f)
+        [ -n "$free_dev" ] || error_exit "no more find free loopback device"
+        losetup $opt $free_dev $file
+        if [ $? -eq 0 ]; then
+            echo $free_dev
+            return 0
+        else
+            sleep 1
+        fi
+    done
+    error_exit "Fail to setup"
+}
+
+
+_k_dev_get_dm_dev() {
+    local dmdevice
+    dmdevice=$(basename $1)
+    dmdev_arr=( $(dmsetup table $dmdevice 2>/dev/null) ) || return 1
+    echo "/dev/loop$(echo ${dmdev_arr[4]} | awk -F: '{print $2}'):/dev/loop$(echo ${dmdev_arr[5]} | awk -F: '{print $2}')"
+}
+
+_k_dev_dm_create() {
+    local imagefile snapfile
+    imagefile=$1
+    snapfile=$2
+    opt=$3
+    [ "$opt" == "-r" ] || opt=""
+    [ ! -n "$imagefile" -a ! -n "$snapfile" ] && error_exit "input not found"
+    [ -f $imagefile ] || error_exit "$imagefile not found"
+
+    [ -f $snapfile ] || _k_dev_create_snapfile $imagefile $snapfile
+    name=$(basename $snapfile)
+
+    for ((i=0; i<20; i++)); do
+        loop1=$(_k_dev_load_img $imagefile -r)
+        loop2=$(_k_dev_load_img $snapfile $opt)
+        [ -L /dev/mapper/$name ] && rm -f /dev/mapper/$name
+        echo 0 $(blockdev --getsz $loop1) snapshot $loop1 $loop2 p 8 | dmsetup create $name
+        rc=$?
+        if [ "$rc" == "0" ]; then
+            echo /dev/mapper/$name
+            return 0
+        else
+            dmsetup remove $name
+            losetup -d $loop1
+            losetup -d $loop2
+            sleep 1
+        fi
+    done
+    return 1
+}
+
+_k_dev_dm_find() {
+    local dm_name
+    dm_name=$(basename $1)
+    [ ! -L $1 -a ! -c $1 -a ! -f $1 ] && error_return "_k_dev_dm_find <device or cow_file1>"
+    [ -n "$dm_name" ] || error_return "_k_dev_dm_find <device or cow_file2>"
+    dmsetup info $dm_name >/dev/null 2>&1 || return 1
+    [ -L /dev/mapper/$dm_name ] && echo /dev/mapper/$dm_name || return 1
+    return 0
+}
+
+_k_dev_dm_close() {
+    local dev dm_dev
+    dev=$1
+    [ ! -L $dev -a ! -c $dev ] && error_return "$dev not found"
+    dm_dev=($(_k_dev_get_dm_dev $dev | sed "s/:/ /g"))
+    dmsetup remove $dev
+    for ((i=0;i<${dm_dev[*]};i++)); do
+        losetup -d ${dm_dev[$i]}
+    done
+    return 0
+}
+
+_k_dev_dm_close_all() {
+    local dm_dev
+    for dm_dev in $(dmsetup ls | grep -iv "^No devices found" | awk '{ print $1 }'); do
+        _k_dev_dm_close $dm_dev
+    done
+}
+
+_k_dev_snapfile_copy() {
+    local src dest
+    src=$1
+    dest=$2
+    [ ! -n "$src" -a ! -n "$dest" ] && error_exit "not found input value"
+    [ -f $src ] || error_exit "$src not found"
+    [ -f $dest ] && error_exit "exist $dest file"
+    cp -af --sparse=always $src $dest
+}
+
+
+_k_dev_cow2loopdev() {
+    local ccowfile cowfile base
+    base=$1
+    cowfile=$2
+    #using Shannon's file
+    [ -f /opt/ace/sbin/convert_cowfile ] && ccowfile=/opt/ace/sbin/convert_cowfile || ccowfile=$(_k_home)/bin/convert_cowfile
+    if $ccowfile --test $cowfile 2>/dev/null ; then
+        if ! $ccowfile --create $base $cowfile.new; then
+            error_exit "Unable to create new device mapper COW file"
+        fi
+        cowdevice=$(_k_dev_dm_create $base $cowfile.new)
+        [ -z "$cowdevice" ] && error_exit "Unable to create COW device"
+        if ! $ccowfile $base $cowfile $cowdevice; then
+            error_exit "Unable to convert cowloop file to new device mapper COW file"
+        fi
+        cow_close $cowdevice
+        mv $cowfile ${cowfile}.cowloop
+        mv $cowfile.new $cowfile
+    fi
+    return 0
+}
+
+#Load HDD module & show HDD number
+_k_dev_hdd_num() {
+   DEV=$([ -f /proc/scsi/scsi ] && grep -w "Direct-Access" /proc/scsi/scsi | wc -l  || echo 0)
+   if [ "$DEV" = "0" ]; then
+      for scsi in ahci scsi_dh sd_mod sg libata; do
+         modprobe $scsi
+      done
+      sleep 5
+      DEV=$([ -f /proc/scsi/scsi ] && grep -w "Direct-Access" /proc/scsi/scsi | wc -l  || echo 0)
+      if [ "$DEV" = "0" ]; then
+         return 1
+      fi
+   fi
+   echo $DEV
+   return 0
+}
+
+_k_dev_load_device() {
+  local dev_map base_file cow_file
+  dev_map=$1
+  base_file=$2
+  cow_file=$3
+
+  if [ "$dev_map" == "gnbd" ]; then
+    lsmod |grep gnbd >& /dev/null || modprobe gnbd
+    if ! gnbd_export -l | grep Server | grep $cluster >& /dev/null ; then
+      loop_num=$(ls /dev/loop* | wc -l)
+      cur_lo_num=$(losetup -a | wc -l)
+      if [ $cur_lo_num -ge $loop_num ]; then
+        echo "No more free loop device"
+        exit 1
+      fi
+      _k_dev_cow2loopdev $base_file $cow_file
+      cow_device=$(_k_dev_dm_create $base_file $cow_file) && setup_cow=1
+      gnbd_export -c -d $cow_device -e $gnbd_name && setup_gnbd=1
+    fi
+    for i in $(seq 1 300); do
+      gnbd_export -l |grep -w $gnbd_name >& /dev/null && break
+      echo -n "."
+      sleep 2
+    done
+    gnbd_import -n -i $(hostname) -I $gnbd_name  || error_exit Unable to import gnbd
+  
+    if ls /dev/gnbd/$gnbd_name >& /dev/null ; then
+      cow_device=/dev/gnbd/$gnbd_name
+    else
+      cow_device=/dev/$( grep $gnbd_name /sys/class/gnbd/*/name | awk -F: '{print $1}'  | awk -F/ '{print $5}' )
+    fi
+  elif [ "$dev_map" == "cow" ]; then
+    #cowdev
+    for i in $(seq 1 300); do
+      cow_device=$(cowdev -l | grep "$cow_file" | awk '{print $1}')
+      [ -n "$cow_device" ] && break
+      echo -n "."
+      sleep 2
+    done
+  elif [ "$dev_map" == "loop" ]; then
+    cow_device=$(_k_dev_dm_find $cow_file)
+    if [ ! -n "$cow_device" ]; then
+      loop_num=$(ls /dev/loop* | wc -l)
+      cur_lo_num=$(losetup -a | wc -l)
+      if [ $cur_lo_num -ge $loop_num ]; then
+        echo "No more free loop device"
+        return 1
+      fi
+      _k_dev_cow2loopdev $base_file $cow_file
+      cow_device=$(_k_dev_dm_create $base_file $cow_file) && setup_cow=1
+    fi
+  else
+    error_return "Device type ($dev_map) not supported"
+  fi
+  echo $cow_device
+}
+
+_k_dev_dump_xfs() {
+   local dev file
+   dev=$1
+   file=$2
+   echo "dump metadata of xfs($dev) to $file"
+#  xfs_metadump -g $dev $file
+   dd if=$dev of=$file bs=512 count=1
+}
+
+_k_dev_dump_drbd() {
+   local res file
+   res=$1
+   file=$2
+   echo "dump metadata of drbd($res) to $file"
+   echo "stop drbd"
+   sleep 10
+   #drbdadm down r0 >& /dev/null
+   drbdadm down $res >& /dev/null
+   sleep 2
+   echo "dump metadata of drbd"
+   drbdadm dump-md $res > $file
+}

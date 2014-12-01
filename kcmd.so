@@ -1,0 +1,920 @@
+#Kage Library  - cmd
+#$lib_ver$:0.0.54
+_k_loaded_cmd(){
+   local null
+}
+
+#include ver
+#include temp
+_k_cmd(){
+    unset _K_ISO
+}
+
+_k_cmd_close(){
+    unset _K_ISO
+}
+     
+_k_cmd_help() {
+   echo "
+KLIB's Linux command functions
+  - mount
+  - mount check
+  - unmount
+  - rm
+  - rpm
+  - dvd
+  - mkdir 
+  - doall
+  - cp
+  - write
+  - read
+  - check os
+  - check kernel
+  - extract file
+  - find dependent kernel modules
+"
+}
+
+_k_cmd_check_mounted_old() {
+    local dest
+    dest=$1
+    [ -n "$(awk -v mount_dir=$dest '{if($2==mount_dir) print}' /proc/mounts)" ] && return 0 || return 1
+}
+
+_k_cmd_check_mounted_v2() {
+   local dev dest
+   dest_dir=$1
+   dev=$2
+   [ -f /proc/mounts ] || error_return "/proc/mounts not found" || return 1
+   if [ -n "$dev" ]; then 
+       if [ "$(echo $dev | awk -F/ '{print $2}')" = "dev" ]; then
+           [ "$(awk -v dev=$dev -v dest=$dest_dir '{if($1==dev && $2==dest) printf "mounted"}' /proc/mounts)" = "mounted" ] && return 0  || return 1
+       fi
+   fi
+   #[ "$(awk -v dest=$dest_dir '{if($2==dest) printf "mounted"}' /proc/mounts)" == "mounted" ] && return 0 || return 1
+   awk -v dest=$dest_dir '{if($2==dest) printf "mounted"}' /proc/mounts | grep "mounted" >/dev/null && return 0 || return 1
+}
+
+_k_cmd_check_mounted() {
+   local dev dest input ii
+   input=($*)
+   if echo ${input[0]} | awk -F/ '{print $2}' | grep  "^dev$" >/dev/null ; then
+         dev=${input[0]} 
+         dest_dir=${input[1]}
+   elif echo ${input[1]} | awk -F/ '{print $2}' | grep  "^dev$" >/dev/null ; then
+         dev=${input[1]} 
+         dest_dir=${input[0]}
+   else
+         dest_dir=${input[0]}
+   fi
+
+   [ -f /proc/mounts ] || error_return "/proc/mounts not found" || return 1
+   if [ -n "$dev" -a -n "$dest_dir" ]; then
+       awk -v dev=$dev -v dest=$dest_dir '{if($1==dev && $2==dest) printf "mounted"}' /proc/mounts | grep "mounted" >/dev/null && return 0  || return 1
+   elif [ -n "$dev" -a ! -n "$dest_dir" ]; then
+       #awk -v dev=$dev  '{if($1==dev) printf "mounted"}' /proc/mounts | grep "mounted" >/dev/null && return 0  || return 1
+       mounted=$(awk -v dev=$dev  '{if($1==dev) print $2; }' /proc/mounts)
+       if [ -n "$mounted" ]; then
+           echo $mounted
+           return 0  
+       else
+           return 1
+       fi
+   elif [ -n "$dest_dir" -a ! -n "$dev" ]; then
+       #awk -v dest=$dest_dir '{if($2==dest) printf "mounted"}' /proc/mounts | grep "mounted" >/dev/null && return 0 || return 1
+       mounted=$(awk -v dest=$dest_dir '{if($2==dest) printf "$2"}' /proc/mounts)
+       if [ -n "$mounted" ]; then
+           echo $mounted
+           return 0  
+       else
+           return 1
+       fi
+     
+   else
+       echo "${FUNCNAME} [<device>] [<mount point>]"
+       return 1
+   fi
+}
+
+_k_cmd_kill_mount() {
+   local dev dest input ii
+   input=($*)
+   if echo ${input[0]} | awk -F/ '{print $2}' | grep  "^dev$" >/dev/null ; then
+         dev=${input[0]}
+         dest_dir=${input[1]}
+   elif echo ${input[1]} | awk -F/ '{print $2}' | grep  "^dev$" >/dev/null ; then
+         dev=${input[1]}
+         dest_dir=${input[0]}
+   else
+         dest_dir=${input[0]}
+   fi
+
+   [ -f /proc/mounts ] || error_return "/proc/mounts not found" || return 1   
+   if [ -n "$dev" -a ! -n "$dest_dir" ]; then
+        for md in $(_k_cmd_check_mounted $dev); do
+              fuser -km $md
+        done
+   elif [ -n "$dest_dir" ]; then
+          fuser -km $dest_dir
+   fi
+}
+
+_k_cmd_mount() {
+    local mount mount_arr exist mount_dir src dest
+    mount="$*"
+    mount_arr=($mount)
+    if (( ${#mount_arr[*]} < 2 )); then
+        echo "_k_cmd_mount [<option> ...] <src> <destination>"
+        return 1
+    fi
+    src=${mount_arr[$((${#mount_arr[*]}-2))]}
+# if NFS case, it has an error
+#    if ! ls $src > /dev/null 2>&1 ; then
+#        echo "$src not found"
+#        return 1
+#    fi
+    dest=${mount_arr[$((${#mount_arr[*]}-1))]}
+    if [ -d $dest ]; then
+        if _k_cmd_check_mounted $dest ; then
+            echo "$dest mounted before"
+            return 0 
+        else
+            if mount $mount; then
+               echo "$src mounted at $dest"
+               return 0 
+            else
+               echo "$src mount fail to $dest"
+               return 1 
+            fi
+        fi
+    else
+        echo "Destination directory($dest) not found"
+        return 1
+    fi
+}
+
+_k_cmd_umount_v1() {
+    local mount exist mount_dir
+    mount=$1
+    _k_cmd_check_mounted ${mount} && ( umount $mount || umount -l $mount || return 1)
+    return 0
+}
+
+_k_cmd_umount_v2() {
+    local exist mount_dir
+    _k_cmd_check_mounted $* && ( umount $1 || umount -l $1 ) || return 1
+}
+
+_k_cmd_umount() {
+    local help
+    help="_k_cmd_umount <mounted dir> [<mount src device>] / check mount state and umount the directory"
+    (( $# > 0 )) || error_return "$help" || return 1
+    _k_cmd_umount_v2 $*
+}
+
+_k_cmd_ping() {
+    local dest count
+    dest=$1
+    count=$2
+    [ -n "$count" ] || count=3
+    ping -c $count $dest >& /dev/null  && return 0 || return 1
+}
+
+_k_cmd_remote_sync() {
+    local remote_host files sf
+    remote_host=$1
+    shift 1
+    files=$*
+    for sf in $files; do
+        [ "$(ssh $remote_host "[ -f $sf -o -d $sf ] && echo 1")" == "1" ] && ( [ -f $sf ] && cp -a $sf ${sf}~; [ -d $sf ] && mv $sf ${sf}~; [ -d $(dirname $sf) ] || mkdir -p $(dirname $sf); echo "sync $sf : $(rsync -aSpl --progress $remote_host:$sf $(dirname $sf) | grep xfer >/dev/null && echo done || echo same )" )
+    done
+}
+
+# same as rsync command
+# --rev : reverse direction
+# --all : both direction
+_k_cmd_rsync() {
+    local input num src dest opt direction
+    direction=0
+    input=( $@ )
+    num=${#input[*]}
+    if (( $num < 2 )); then
+        echo "_k_cmd_rsync [<option> ...] <src> <destination>"
+        return 1
+    fi
+    src=${input[ $(($num-2)) ]}
+    dest=${input[ $(($num-1)) ]}
+    for (( i=0; i < $(($num - 2)); i++ )); do
+        if [ "${input[$i]}" == "--rev" ]; then
+           direction=1
+        elif [ "${input[$i]}" == "--all" ]; then
+           direction=2
+        else
+           opt="$opt ${input[$i]}"
+        fi
+    done
+    [ -n "$opt" ] || opt="-aupSl"
+
+echo "DBG: rsync $opt ${src}/ $dest with direction $direction"
+
+    if [ "$direction" == "0" ]; then
+        rsync $opt ${src}/ $dest || return 1
+    elif [ "$direction" == "1" ]; then
+        rsync $opt ${dest}/ $src || return 1
+    elif [ "$direction" == "2" ]; then
+        rsync $opt ${src}/ $dest || return 1
+        sync
+        rsync $opt ${dest}/ $src || return 1
+    fi
+    return 0
+}
+
+#sync from destination directory to source directory and clean(remove) destination directory
+# and mount source directory to destination directory
+_k_cmd_sync_clean_mount() {
+  local input src dest
+  input=( $@ )
+  src_arr=( $(echo ${input[$(( ${#input[*]} - 2))]} | sed "s/:/ /g") )
+  dest=${input[$(( ${#input[*]} - 1))]}
+  if (( ${#input[*]} < 2 )); then
+        echo "_k_cmd_sync_clean_mount [<option>] <src> <dest>"
+        return 1
+  fi
+
+  for (( i=0; i < $(( ${#input[*]} - 2 )); i++)); do
+      opt="$opt ${input[$i]}"
+  done
+
+
+  dest_tmp=${dest}.$(mktemp -u XXXXXX)
+
+  if ! _k_cmd_check_mounted $dest ; then
+      for src_dir in ${src_arr[*]}; do
+          if [ -f $src_dir ]; then
+             if [ -e $dest ]; then
+                 [ -f $dest ] || echo "different type between $src_dir and $dest"
+             else
+                 touch $dest || return 1
+             fi
+          elif [ -d $src_dir ]; then
+             if [ -e $dest ]; then
+                 [ -d $dest ] || echo "different type between $src_dir and $dest"
+                 size=$(du -s $dest 2>/dev/null | awk '{print $1}')
+                 if [ "$size" != "0" ]; then
+                     mv ${dest} $dest_tmp && mkdir -p ${dest} || return 1
+                 fi
+             else
+                 mkdir -p $dest || return 1
+             fi
+          fi
+          if _k_cmd_mount $opt $src_dir $dest ; then
+             if [ -d $dest_tmp ]; then
+                if _k_cmd_rsync -aupSl $dest_tmp/ ${dest} ; then
+                    rm -fr $dest_tmp && return 0 || return 1
+                else
+                    return 1
+                fi
+             else
+                return 0
+             fi
+          fi
+      done
+  fi
+}
+
+#just sync from destination directory to source directory
+# and mount source directory to destination directory
+_k_cmd_sync_mount() {
+  local input src dest
+  input=( $@ )
+  src_arr=( $(echo ${input[$(( ${#input[*]} - 2))]} | sed "s/:/ /g") )
+  dest=${input[$(( ${#input[*]} - 1))]}
+  if (( ${#input[*]} < 2 )); then
+        echo "_k_cmd_sync_mount [<option>] <src> <dest>"
+        return 1
+  fi
+
+  for (( i=0; i < $(( ${#input[*]} - 2 )); i++)); do
+      opt="$opt ${input[$i]}"
+  done
+
+
+  dest_tmp=$(mktemp -u /tmp/$(basename $dest).XXXXXX)
+
+  if ! _k_cmd_check_mounted $dest ; then
+      for src_dir in ${src_arr[*]}; do
+          if [ -f $src_dir ]; then
+             if [ -e $dest ]; then
+                 [ -f $dest ] || echo "different type between $src_dir and $dest"
+             else
+                 touch $dest || return 1
+             fi
+          elif [ -d $src_dir ]; then
+             if [ -e $dest ]; then
+                 [ -d $dest ] || echo "different type between $src_dir and $dest"
+                 size=$(du -s $dest 2>/dev/null | awk '{print $1}')
+                 if [ "$size" != "0" ]; then
+                     mkdir -p $dest_tmp && _k_cmd_mount $opt $src_dir $dest_tmp
+                     _k_cmd_rsync -aupSl ${dest}/ $dest_tmp
+                     sync
+                     _k_cmd_umount $dest_tmp && rmdir $dest_tmp
+                 fi
+             else
+                 mkdir -p $dest || return 1
+             fi
+          fi
+          _k_cmd_mount $opt $src_dir $dest && return 0 
+      done
+      return 1
+  fi
+}
+
+# basic =>  <src>:<dest>
+# include exclude-dir =>  <src>:<dest>:<exclude1>:<exclude2>....
+# all sync
+_k_cmd_all_sync() {
+  local all_sync sync sync_arr
+  all_sync="$@"
+  for sync in  $all_sync; do
+    sync_arr=($(echo $sync | sed "s/:/ /g"))
+    if (( ${#sync_arr[*]} < 2 )); then
+        echo "_k_cmd_all_sync <src>:<dest>[:<exclude1>:<exclude2>...]"
+        return 1
+    fi
+    src=${sync_arr[0]}
+    dest=${sync_arr[1]}
+
+    #exclude
+    if (( ${#sync_arr[*]} > 2 )); then
+       for (( i=2; i<${#sync_arr[*]}; i++ )); do
+           exclude_dir="$exclude_dir --exclude ${sync_arr[$i]} "
+       done
+    fi
+
+    if [ -d $src ]; then
+        [ -d $dest ] || mkdir -p $dest
+
+echo "DBG : _k_cmd_all_sync =>  _k_cmd_rsync -aupSl --all --progress $exclude_dir $src $dest"
+
+        _k_cmd_rsync -aupSl --all --progress $exclude_dir $src $dest || return 1
+    else
+       echo "$src directory not found"
+       return 1
+    fi
+  done
+  return 0
+}
+
+# sync
+_k_cmd_sync() {
+  local all_sync sync sync_arr
+  all_sync=$@
+  for sync in  $all_sync; do
+    sync_arr=($sync)
+    if (( ${#sync_arr[*]} < 2 )); then
+        echo "_k_cmd_sync <src>:<dest>[:<exclude1>:<exclude2>...]"
+        return 1
+    fi
+    src=${sync_arr[0]}
+    dest=${sync_arr[1]}
+    if (( ${#sync_arr[*]} > 2 )); then
+       for (( i=0; i<${#sync_arr[*]}; i++ )); do
+           exclude_dir="--exclude ${sync_arr[$((2+$i))]} "
+       done
+    fi
+    if [ -d $src ]; then
+        [ -d $dest ] || mkdir -p $dest
+        _k_cmd_rsync -aupSl --progress $exclude_dir $src $dest
+    fi
+  done
+  return 0
+}
+
+_k_cmd_rm() {
+  local dest _opt
+  if _k_lib_opt "$*" -f > /dev/null ; then
+     _opt="-f"
+     shift 1
+  elif _k_lib_opt "$*" -fr > /dev/null ; then
+     _opt="-fr"
+     shift 1
+  fi
+
+  dest=($*)
+  (( ${#dest[*]} == 0 )) || return 1
+  for ((i=0; i<${#dest[*]}; i++)); do
+     if [ -f ${dest[$i]} ]; then
+        [ "$_opt" == "-fr" ] && _opt="-f"
+        echo "remove $${dest[$i]} file"
+        rm $_opt $${dest[$i]}
+     elif [ -d ${dest[$i]} ]; then
+        echo "remove ${dest[$i]} directory"
+        if [ -n "$_opt" ]; then
+           rm $_opt ${dest[$i]}/*
+        fi
+        rmdir ${dest[$i]}
+     fi
+  done
+}
+
+_k_cmd_iso_mount_v1() {
+    local base dvd_name dvd_name_arr dvd_base_dir base
+    base=/images
+    dvd_name=""
+    for dvd in $(ls $base/$OS_NAME$OS_RELEASE/*${OS_NAME}*${OS_RELEASE}*x86_64*.iso 2>/dev/null | sort); do
+        dvd_name="$dvd_name $dvd"
+    done
+    dvd_name_arr=( $dvd_name )
+    if (( ${#dvd_name_arr[*]} <= 0 )); then
+        echo "/mnt 0"
+        #echo "ACE Installer need ${OS_NAME}*${OS_RELEASE}*.iso file in /images/$OS_NAME$OS_RELEASE directory."
+        #exit
+    fi
+
+    if [ -d /mnt ]; then
+        dvd_base_dir=/mnt
+    elif [ -d /media ]; then
+        dvd_base_dir=/media
+    fi
+    echo "$dvd_base_dir ${#dvd_name_arr[*]}"
+
+    for i in $(seq 1 ${#dvd_name_arr[*]}); do
+        if [ -n "${dvd_name_arr[$(( $i - 1))]}" ]; then
+            df | grep "${dvd_name_arr[$(( $i - 1))]}" >& /dev/null && continue
+            [ -d $dvd_base_dir/$i ] || mkdir -p $dvd_base_dir/$i
+            mount -o loop ${dvd_name_arr[$(( $i - 1))]} $dvd_base_dir/$i
+        fi
+    done
+}
+
+_k_cmd_iso_mount() {
+    _k_libs temp >/dev/null || error_return "requirement temp lib" || return 1
+    _k_libs opt >/dev/null || error_return "requirement opt lib" || return 1
+    local base dvd_name dvd_name_arr dvd_base_dir base input mount_dir
+    base=$(_k_lib_opt "$*" -b)
+
+    mount_dir=$(_k_lib_opt "$*" -m)
+
+    iso_files=$(_k_lib_opt "$*" -f)
+
+    if [ -n "$base" ]; then
+        if [ -n "$iso_files" ]; then 
+            for ii in $iso_files; do
+                iso_files="$iso_files $base/$(basename $ii)"
+            done
+        else
+            iso_files="$(ls $base/*.iso 2>/dev/null | sort)"
+        fi
+    else
+        _k_cmd_check_os
+        iso_files="$(ls /images/$OS_NAME$OS_RELEASE/*${OS_NAME}*${OS_RELEASE}*x86_64*.iso 2>/dev/null | sort)"
+    fi
+
+    dvd_name_arr=( $iso_files )
+    (( ${#dvd_name_arr[*]} > 0 )) || error_return "iso file not found" || return 1
+
+    for (( ii=0 ; ii < ${#dvd_name_arr[*]}; ii++ )); do
+        [ -n "$mout_dir" ] && dvd_base_dir=$mount_dir/$ii || dvd_base_dir=$(_k_temp_open)
+        _k_cmd_check_mounted $dvd_base_dir && continue
+        [ -d $dvd_base_dir ] || mkdir -p $dvd_base_dir
+        mount -o loop ${dvd_name_arr[$ii]} $dvd_base_dir
+        export _K_ISO="$_K_ISO $dvd_base_dir"
+    done
+}
+
+_k_cmd_iso_umount() {
+    local dvd_base_dir dvd_num
+    for dvd in $_K_ISO; do
+        _k_cmd_umount $dvd
+    done
+    unset _K_ISO
+}
+
+_k_cmd_chk_installed_file() {
+    local filename pname ifn new_root
+    filename=$1
+    new_root=$2
+    [ -n "$new_root" ] && new_root_opt="--root=$new_root"
+    pname=( $(file_name_info $filename) )
+    if [ "${pname[1]}" == "rpm" ]; then
+       if [ "$(file $filename | awk '{print $2}')" == "RPM" ]; then
+          rpm_filename=$(rpm -qa --queryformat '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n' -p $filename)
+       else
+          rpm_filename=$(echo $(basename $filename) | sed "s/\.rpm//g" )
+       fi
+
+       if rpm -qa $new_root_opt --queryformat '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n' | grep -w "${rpm_filename}$" >& /dev/null ; then
+          echo 1
+       else
+          rpm -qa $new_root_opt --queryformat '%{NAME}\n' | grep -w "${rpm_filename}$" >& /dev/null && echo 1 || echo 0
+       fi
+    elif [ "${pname[1]}" == "tgz" -o "${pname[1]}" == "gz" ]; then
+       if [ -f $filename ]; then
+          for ifn  in $(tar ztf $filename); do
+             if [ ! -f /$ifn ]; then
+               echo 0
+               break
+             fi
+          done
+          echo 1
+       fi
+    elif [ "${pname[1]}" == "bz2" ]; then
+       if [ -f $filename ]; then
+          for ifn  in $(tar jtf $filename); do
+             if [ ! -a /$ifn ]; then
+               echo 0
+               break
+             fi
+          done
+          echo 1
+       else
+          echo 0
+       fi
+    elif [ "${pname[1]}" == "patch" ]; then
+       patch_file=$(grep "^#path:" $filename | awk '{print $2}')
+       if [  -f ${patch_file}.ace ]; then
+           echo 1
+       else
+           echo 0
+       fi
+    elif [ "${pname[1]}" == "sh" ]; then
+       sh_file=$(grep "^#path:" $filename | awk '{print $2}')
+       if [ -n "$sh_file" ]; then
+         if [  -f ${sh_file}.ace ]; then
+           echo 1
+         else
+           echo 0
+         fi
+       else
+         echo 0
+       fi
+    else
+       [ -f $filename ] && echo 1 || echo 0
+    fi
+}
+
+_k_cmd_rpm_find_path_v1() {
+    local dvd_base_dir os_name os_version rpm_name dvd dvd_dir dvd_pkg_dir find_name dvd_num ace_share_path f_rpm_name
+    rpm_name=$1
+    os_name=$2
+    os_version=$3
+    dvd_base_dir=$4
+    dvd_num=$5
+    ace_share_path=$6
+    [ -n "$rpm_name" ] || error_return "rpm_name nothing" || return 1
+    f_rpm_name=$(basename $rpm_name)
+
+    [ -n "$dvd_num" ] || dvd_num=0
+    if [ -n "$ace_share_path" ]; then
+        [ -d /opt/ace/share ] && ace_share_path=/opt/ace/share || ace_share_path=$(pwd)
+    fi
+
+    if [ "$os_name" == "rhel" -o "$os_name" == "centos" ];then
+        if [ "$(_k_ver_higher 5.5 $os_version)" == "1" ]; then
+            dvd_pkg_dir=Packages
+        else
+            dvd_pkg_dir=Servers
+        fi
+    else
+#        echo "not support this OS"
+        return 1
+    fi
+
+    #find rpm in DVD
+    for dvd in $(seq 1 $dvd_num); do
+        dvd_dir=$dvd_base_dir/$dvd/$dvd_pkg_dir
+        if [ -d $dvd_dir ]; then
+            find_name=$(ls $dvd_dir/$f_rpm_name 2> /dev/null)
+            [ -n "$find_name" ] && break
+        fi
+    done
+
+    #find rpm in packages
+    if [ ! -n "$find_name" ]; then
+        for pkg_group in common $os_name$os_version; do
+            base_ace_package_dir=$ace_share_path/packages/$pkg_group
+            for ace_pkg in req post; do
+                if [ -f $base_ace_package_dir/$ace_pkg/$f_rpm_name ]; then
+                    find_name=$base_ace_package_dir/$ace_pkg/$f_rpm_name
+                    break
+                fi
+            done
+            [ -n "$find_name" ] && break
+        done
+    fi
+
+    if [ ! -n "$find_name" ]; then
+        [ -f $rpm_name ] && find_name=$rpm_name
+    fi
+    echo $find_name
+#    if [ -n "$find_name" ]; then
+#       #(( $(stat -c %s $find_name) > 0 )) && echo $find_name || error_return "$find_name is defined file not real file"
+#       echo $find_name
+#    else
+#       error_return "$rpm_name not found in DVD & ACE"
+#    fi
+}
+
+_k_cmd_rpm_find_path() {
+    _k_libs ver || error_return "requirement ver lib" || return 1
+    local rpm_name dvd dvd_dir find_name f_rpm_name
+    rpm_name=$1
+    shift 1
+    find_dir="$*"
+
+    [ -n "$rpm_name" ] || error_return "rpm_name nothing" || return 1
+
+    [ -f $rpm_name ] && find_name=$rpm_name
+
+    #find rpm in assigned directory in ACE
+    if [ ! -n "$find_name" ]; then
+        f_rpm_name=$(basename $rpm_name)
+        [ -n "$find_dir" ] || find_dir=$(pwd)
+        for pkg_group in $find_dir; do
+            find_name=$(ls $pkg_group/$f_rpm_name 2> /dev/null) && break
+        done
+    fi
+
+    #find rpm in DVD
+    if [ ! -n "$find_name" ]; then
+        _k_cmd_check_os
+        if [ "$OS_NAME" == "rhel" -o "$OS_NAME" == "centos" ]; then
+            [ "$(_k_ver_higher 5.5 $OS_RELEASE)" == "1" ] && dvd_pkg_dir=Packages || dvd_pkg_dir=Servers
+        fi
+
+        for dvd in $_K_ISO; do
+            dvd_dir=$dvd/$dvd_pkg_dir
+            if [ -d $dvd_dir ]; then
+                find_name=$(ls $dvd_dir/$f_rpm_name 2> /dev/null) && break
+            fi
+        done
+    fi
+    echo $find_name
+    [ -n "$find_name" ] && return 0 || return 1
+}
+
+_k_cmd_find_module() {
+    _k_cmd_auth_root
+    local x _kernel_version _module _root
+    _module=$1
+    _root=$2
+    _kernel_version=$3
+    [ -n "$_root" ] || _root=/
+    [ -n "$_kernel_version" ] || _kernel_version=$(uname -r)
+    x=$(chroot $_root /bin/sh -c "cd /lib/modules/$_kernel_version && /sbin/modprobe -i --set-version $_kernel_version --show-depends $_module | grep '^insmod' | awk '{print \$2;}' | sed 's#^/##'")
+    echo "$x" | sed "s#^lib/modules/$_kernel_version/##" | sed "s#^#lib/modules/$_kernel_version/#" | grep -v "lib/modules/$_kernel_version/$"
+}
+
+_k_cmd_find_dependencies() {
+    local _module_path _depend_line _root
+    _module_path=$1
+    _root=$2
+    _depend_line=$(grep "^/${_module_path}: " ${_root}lib/modules/$kernel_version/modules.dep)
+    set -- $_depend_line
+    shift 1
+    echo $*
+}
+
+
+_k_cmd_do_loop_mount() {
+    local retry
+    retry=10
+    while [ $retry -gt 0 ]; do
+        mount -o loop $1 $2 && return 0
+        sleep 5
+        ((retry-=1))
+    done
+    return 1
+}
+
+_k_cmd_rsync_to_tmp() {
+  local remote filename work_dir
+  filename=$1
+  remote=$2
+  work_dir=$3
+  [ -n "$work_dir" ] || work_dir=/tmp
+  echo "rsync_to_tmp> $filename $remote"
+  [ -n "$remote" ] &&  rsync root@${remote}:${filename} $work_dir || cp -a $filename $work_dir
+
+}
+
+_k_cmd_extract() {
+  local sourcefile tmpdir
+  sourcefile=$1
+  echo "extract> $sourcefile"
+  [ -n "$sourcefile" ] || error_return "extract  <source file>" || return 1
+  [ -f "$sourcefile" ] || error_return "extrace> $sourcefile not found" || return 1
+  tmpdir=$(mktemp -d ./$(basename $sourcefile)-XXXXXXX)
+# tmpdir=$(mktemp -d /tmp/$(basename $sourcefile)-XXXXXXX)
+  fext=( $(basename $sourcefile | sed "s/\./ /g") )
+  ext=${fext[$((${#fext[*]}-1))]}
+  if [ "$ext" == "tgz" ]; then
+    tar zxvf $sourcefile -C $tmpdir
+  elif [ "$ext" == "tar" ]; then
+    tar xvf $sourcefile -C $tmpdir
+  elif [ "$ext" == "gz" ]; then
+    tar zxvf $sourcefile -C $tmpdir
+  elif [ "$ext" == "bz2" ]; then
+    tar jxvf $sourcefile -C $tmpdir
+  elif [ "$ext" == "zip" ]; then
+    cp $sourcefile $tmpdir
+    ( cd $tmpdir; unzip $sourcefile )
+  elif [ "$ext" == "rpm" ]; then
+    rpm -ihv $sourcefile
+  else
+    error_return "not support extension file" || return 1
+  fi
+  target_dir=$(cd $tmpdir/$(ls $tmpdir/) && pwd)
+}
+
+_k_cmd_check_os() {
+  redhat=0
+  if [ -f /etc/redhat-release ]; then
+    redhat=1
+    if cat /etc/redhat-release  |grep "^CentOS" > /dev/null 2>&1 ; then
+      OS_NAME=centos
+      OS_VERNAME=CentOS
+      OS_RELEASE=$(cat /etc/redhat-release | awk '{print $3}')
+    else
+      OS_NAME=rhel
+      OS_VERNAME="Red Hat "
+      OS_RELEASE=$(cat /etc/redhat-release | awk '{print $7}')
+    fi
+  elif [ -f /etc/SuSE-release ]; then
+    OS_NAME=sles
+    OS_VERNAME="SuSE Linux "
+    OS_PATCH=$(cat /etc/SuSE-release | grep PATCHLEVEL | awk '{print $3}')
+    [ -n "$OS_PATCH" ] && OS_RELEASE=$(cat /etc/SuSE-release | grep VERSION | awk '{print $3}').$OS_PATCH || OS_RELEASE=$(cat /etc/SuSE-release | grep VERSION | awk '{print $3}')
+  elif [ "$(uname -s)" == "Darwin" ]; then
+    OS_NAME=osx
+    OS_VERNAME=$(sw_vers -productName)
+    OS_RELEASE=$(sw_vers -productVersion)
+  #elif echo $(uname -m) | grep arm >/dev/null; then
+  elif [ -f /system/bin/am -a -f /system/bin/pm ]; then
+    OS_NAME=android
+#    OS_VERNAME=$(sw_vers -productName)
+#    OS_RELEASE=$(sw_vers -productVersion)
+    OS_VERNAME=
+    OS_RELEASE=
+  elif [ -f /etc/issue ]; then
+    OS_NAME=ubuntu
+    OS_VERNAME=$(cat /etc/issue | awk '{print $1;}')
+    OS_RELEASE=$(cat /etc/issue | awk '{print $2;}')
+  else
+    error_return "This is not support OS" || return 1 
+  fi
+  return 0
+}
+
+_k_cmd_auth_root() {
+   [ "$(id -u)" == "0" ] || error_return You must be root || return 1
+   return 0
+}
+
+_k_cmd_rpm_dep() {
+    local file
+    file=$1
+    echo $(rpm -qR -p $i | grep -v ".so." | grep -v "^/" | grep -v "(" | awk '{print $1}' | sort | uniq )
+}
+
+
+_k_cmd_doall() { # run command though ssh
+  local _ns _hosts _opt _cmd
+  _cmd=$1
+  shift 1
+  _hosts=$*
+  _opt=$(_k_lib_opt "$_hosts" -o) && shift 2
+  _hosts=$*
+
+  if [ $# -lt 1 ]; then
+     echo "_k_cmd_doall <cmd> [ -o <option> ] <hostname> [ <hostname2> ...]"
+     return 1
+  else
+    for _ns in $_hosts ; do
+      ssh $_ns $_cmd $_opt
+    done
+  fi
+}
+
+_k_cmd_doallb() { #run command in background though ssh
+  local _ns _hosts _opt _cmd
+  _cmd=$1
+  shift 1
+  _hosts=$*
+  _opt=$(_k_lib_opt "$_hosts" -o) && shift 2
+  _hosts=$*
+
+  if [ $# -lt 1 ]; then
+   error_return "_k_cmd_doall <cmd> [ -o <option> ] <hostname> [ <hostname2> ...]"
+  else
+    for _ns in $_hosts ; do
+      ssh $_ns -f $_cmd $_opt
+    done
+  fi
+}
+
+_k_cmd_mkdir() {
+   file=$(echo $1 | sed -e "s/^\.\///g")
+
+   if [ ! -d  /$(dirname $file) ]; then
+      echo "/$(dirname $file) : create"
+      ACEFS=( $(echo $(dirname $file) | sed -e "s/\// /g") )
+      if [ "${ACEFS[0]}" == "acefs" ]; then
+          if [ "${ACEFS[1]}" == "clusters" -a "${ACEFS[3]}" == "mount" ]; then
+             [ -d /${ACEFS[0]}/${ACEFS[1]}/$ACEFS[2]}/mount ] &&  mkdir -p /$(dirname $file)
+          elif [ "${ACEFS[1]}" == "global" -a "${ACEFS[2]}" == "mount" ]; then
+             [ -d /${ACEFS[0]}/${ACEFS[1]}/mount ] &&  mkdir -p /$(dirname $file)
+          fi
+      else
+          mkdir -p /$(dirname $file)
+      fi
+   fi
+}
+
+_k_cmd_sync2() {
+   #_k_cmd_sync2 <source home dir> <target file name with patch> <force option(-f)>
+   src_dir=$1
+   file=$(echo $2 | sed -e "s/^\.\///g")
+   force=$3
+
+   _k_cmd_mkdir $2
+
+   if [ -f $src_dir/$file ]; then
+     if [ -f /$file ]; then
+        if [ "$force" != "-f" ]; then
+          if ! diff $src_dir/$file /${file} >& /dev/null; then
+            [ -d /$(dirname $file) ] && (cp -fa $src_dir/$file /${file}~ && ( mv /${file}~ /${file} && echo "/${file} : ok" || echo echo "/${file} : fail") || echo "/${file} : fail" ) || echo "/$(dirname $file) directory not found"
+          else
+            echo "/${file} : skip(same)"
+          fi
+        else
+          [ -d /$(dirname $file) ] && (cp -fa $src_dir/$file /${file}~ && ( mv /${file}~ /${file} && echo "/${file} : ok" || echo echo "/${file} : fail") || echo "/${file} : fail" ) || echo "/$(dirname $file) directory not found"
+        fi
+     else
+        [ -d /$(dirname $file) ] && (cp -fa $src_dir/$file /${file}~ && ( mv /${file}~ /${file} && echo "/${file} : ok" || echo "/${file} : fail" ) || echo "/${file} : fail" ) || echo "/$(dirname $file) directory not found"
+     fi
+   elif [ -d /$file ]; then
+      cp -fra $src_dir/$file /$file && echo "dir /${file} : ok" || echo "dir /${file} : fail"
+   else
+      echo "/$file not found"
+   fi
+}
+
+_k_cmd_check_kernel() {
+    local supported_kernels
+    supported_kernels=$*
+    for kernel in $supported_kernels; do
+        [ "$(uname -r)" = "$kernel" ] &&  return 0
+    done
+    error_return "You must be running one of the following kernels - $supported_kernels" || return 1
+}
+
+_k_cmd_read() {
+   local rpath
+   rpath=$1
+   [ -n "$rpath" ] || error_return "k_cmd_read> input dest($rpath) not found" || return 1
+   [ -d $rpath ] && return 1
+   [ -s $rpath ] && cat $rpath -A | sed "s/\^M//g" | sed "s/\$$//g" || echo "-"
+   return 0
+}
+
+_k_cmd_write() {
+   local data dest
+   data="$1"
+   dest="$2"
+   [ -n "$dest" ] || error_return "k_cmd_write> input dest($dest) not found"
+   [ -d $(dirname $dest) ] || error_return "$(dirname $dest) not found"
+   [ "$data" == "-" -o "${#data}" == "0" ] && cat /dev/null > $dest || \
+   echo "$data" | cat -A | sed "s/\^M//g" | sed "s/\$$//g" > $dest
+   return 0
+}
+
+_k_cmd_clean() {
+   local data dest
+   dest=$1
+   [ -n "$dest" ] || error_return "_k_cmd_clean> input($dest) not found "
+   [ -d $(dirname $dest) ] || error_return "path $(dirname $dest) not found" || return 1
+   cat /dev/null > $dest
+   return 0
+}
+
+_k_cmd_cp() {
+   local input opt
+   input=($*) 
+   for ((ii=0;ii<${#input[*]}; ii++)); do
+      if echo ${input[$ii]} | grep "^-" >/dev/null; then
+         echo ${input[$ii]} | grep "^--sparse=" >/dev/null || sparse="--sparse=auto"
+         opt="$opt ${input[$ii]}"
+         input[$ii]=""
+      fi
+   done
+   \cp ${opt} $sparse ${input[*]}
+}
+
+_k_cmd_diff() {
+   local file dir
+   file=$1
+   dir=$2
+   [ -f $dir/$file ] || error_return "$dir/$file not found" || return 1
+   diff -up $file $dir/$file
+}

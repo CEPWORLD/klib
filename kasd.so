@@ -1,0 +1,215 @@
+#Kage Library  - ace
+#$lib_ver$:0.0.27
+_k_loaded_asd(){
+   local null
+}
+
+_k_asd_help() {
+   echo "ACE SVN command library"
+}
+
+#_k_asd(){
+#   start code here
+#}
+#_k_asd_close(){
+# close code here
+#}
+     
+_k_asd_desc() {
+   echo "ACE source development functions using SVN"
+}
+
+_k_asd_home() {
+   echo /home/kage/work/ace.devel/ace.src
+}
+
+_k_asd_works() {
+   local ace_home
+   find $(_k_asd_home) -type d -name "kage" -print -exec ls {} \;
+}
+
+_k_asd_diff() {
+   local ace_home
+   for ii in $(find $(_k_asd_home) -type d -name "kage" -print); do
+       for jj in $(ls $ii); do
+           if [ -f $(echo $ii | sed "s/kage$//g")/$jj ]; then  
+               diff -up $ii/$jj $(echo $ii | sed "s/kage$//g")/$jj
+           else
+               echo "$ii/$jj not found in SVN"
+           fi
+       done
+   done
+}
+
+_k_asd_co() {
+   local ace_home opt
+   opt=$1
+   cd $(_k_asd_home)
+   echo "SVN update"
+   svn update
+   echo "work files diff"
+   _k_asd_diff | less
+   for ii in $(find $(_k_asd_home) -type d -name "kage" -print); do
+       for jj in $(ls $ii); do
+         if [ -f $(echo $ii | sed "s/kage$//g")/$jj ]; then
+           if ! cmp $ii/$jj $(echo $ii | sed "s/kage$//g")/$jj >/dev/null; then
+               if [ "$opt" == "all" ]; then
+                   \mv  $ii/$jj $(echo $ii | sed "s/kage$//g")/$jj
+               else
+                   echo
+                   echo -n "$ii/$jj commit ([y]/n)? "
+                   read y
+                   [ "$y" != "n" -a "$y" != "N" ] && \mv  $ii/$jj $(echo $ii | sed "s/kage$//g")/$jj
+               fi
+           fi
+         else
+               if [ "$opt" == "all" ]; then
+                   \mv  $ii/$jj $(echo $ii | sed "s/kage$//g")/$jj
+                   cd $(echo $ii | sed "s/kage$//g") 
+                   svn add $jj
+                   cd - >/dev/null
+               else
+                   echo
+                   echo -n "$ii/$jj commit ([y]/n)? "
+                   read y
+                   if [ "$y" != "n" -a "$y" != "N" ]; then
+                       \mv  $ii/$jj $(echo $ii | sed "s/kage$//g")/$jj
+                       cd $(echo $ii | sed "s/kage$//g") 
+                       svn add $jj
+                       cd - >/dev/null
+                   fi
+               fi
+         fi
+       done
+   done
+   echo "SVN DIFF"
+   svn diff | less
+   echo "SVN commit"
+   read x
+   svn co
+}
+
+_k_asd_build() {
+  local auto_dir auto_build_menu x ii vbm
+  declare -i x
+
+  vbm=$(which VBoxManage)
+
+  auto_build=/work/release/auto_ace_build_vm/build
+  auto_build_menu[0]="quit"
+  auto_build_menu[1]="builded history log"
+  auto_build_menu[2]="ACE_BUILD_O1541_R62"
+  auto_build_menu[3]="ACE_BUILD_MO1.5.3-3.0.0_R6.2"
+  while [ 1 ]; do
+  clear
+  echo 
+  echo "select menu : "
+  for ((ii=0;ii<${#auto_build_menu[*]};ii++)); do
+    echo "  $ii : ${auto_build_menu[$ii]}"
+  done
+  echo
+
+  echo -n "  which do you want ? "
+  read x
+
+  echo
+  [ "$x" == "0" ] && return 0
+  if [ "$x" == "1" ]; then
+      echo "ACE history"
+      cat /work/release/auto_ace_build_vm/auto_build_history.log
+      read m
+      echo "ISO history"
+      cat /work/release/auto_ace_build_vm/auto_build_iso_history.log
+  elif [ -f $auto_build.lock ]; then
+      echo "Still working.... now"
+      sleep 5
+  elif (( $x > 1 && $x < ${#auto_build_menu[*]} )); then
+      echo "Set build to ${auto_build_menu[$x]} server"
+      [ -d $(dirname $auto_build) ] && echo "${auto_build_menu[$x]}" > $auto_build || error_return  "$(dirname $auto_build) not found" || return 1
+      sleep 5
+  else
+      echo "Unknown command $(x)"
+      sleep 5
+  fi
+  done
+}
+
+_k_asd_build_v2() {
+  local auto_dir auto_build_menu x ii vbm
+  declare -i x
+
+  vbm=$(which VBoxManage)
+
+  auto_build=/work/release/auto_ace_build_vm/build
+  auto_build_menu[0]="quit"
+  auto_build_menu[1]="builded history log"
+  auto_build_menu[2]="ACE_BUILD_O1541_R62"
+  auto_build_menu[3]="ACE_BUILD_MO1.5.3-3.0.0_R6.2"
+  while [ 1 ]; do
+  clear
+  echo
+  echo "select menu : "
+  for ((ii=0;ii<${#auto_build_menu[*]};ii++)); do
+    echo "  $ii : ${auto_build_menu[$ii]}"
+  done
+  echo
+
+  echo -n "  which do you want ? "
+  read x
+
+  echo
+  [ "$x" == "0" ] && return 0
+  if [ "$x" == "1" ]; then
+      echo
+      echo "ACE history"
+      echo
+      cat /work/release/auto_ace_build_vm/auto_build_history.log | less
+      echo
+      echo "ISO history"
+      echo
+      cat /work/release/auto_ace_build_vm/auto_build_iso_history.log | less
+  elif [ -f $auto_build.lock ]; then
+      echo "Still working.... now"
+      sleep 5
+  elif (( $x > 1 && $x < ${#auto_build_menu[*]} )); then
+##################################################################
+# start vbox
+##################################################################
+
+      if [ "$(id -u)" == "0" ]; then
+          if [ "$(su - kage vboxmanage showvminfo ${auto_build_menu[$x]} | grep "^State" | awk '{print $2}')" != "running" ]; then
+               su - kage vboxmanage startvm ${auto_build_menu[$x]}
+          fi
+      else
+          k vbox_state ${auto_build_menu[$x]} || k vbox_power ${auto_build_menu[$x]} on
+      fi
+      for ((ii=0; ii<600; ii++)); do
+                ping -c 3 ${auto_build_menu[$x]} >/dev/null && break
+                sleep 2
+      done
+      for ((ii=0; ii<300; ii++)); do
+          disk_size=$(ssh -o ConnectTimeout=5 r62_o1541 df -h /work | grep "/work$" | awk '{ print$4}' | sed "s/%//g" 2>/dev/null)
+          [ -n "$disk_size" ] && break
+          sleep 2
+      done
+
+      [ -n "$disk_size" ] || error_return "Can't found working directory in ${auto_build_menu[$x]} server" || return 1
+      if (( $disk_size > 97 )); then
+           error_return "No more disk space at ${auto_build_menu[$x]} working directory" || return 1
+      fi
+      sleep 60
+##################################################################
+      echo "Set build to ${auto_build_menu[$x]} server"
+      [ -d $(dirname $auto_build) ] && echo "${auto_build_menu[$x]}" > $auto_build || error_return  "$(dirname $auto_build) not found" || return 1
+      sleep 5
+##################################################################
+# finish build
+# stop vbox
+# su - kage vboxmanage controlvm ${auto_build_menu[$x]} poweroff
+##################################################################
+  else
+      echo "Unknown command $(x)"
+      sleep 5
+  fi
+  done
+}

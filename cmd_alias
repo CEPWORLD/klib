@@ -1,0 +1,25 @@
+# append to the history file, don't overwrite it
+shopt -s histappend
+#script -a script.log/$(date +%Y%m%d-%H%M%S).log
+
+# for setting history length see HISTSIZE and HISTFILESIZE in bash(1)
+HISTSIZE=2048
+HISTFILESIZE=3000
+fbcon=scrollback:128k
+
+#klib
+alias kvi='_k_vi '
+
+#dev
+alias dev='cd ~kage/works/ace.devel/ace.main.trunk/'
+
+#kage
+alias cep='ssh cep@cep'
+alias dev='cd ~kage/works/ace.devel/ace.main.trunk'
+alias work='cd ~kage/works'
+alias download='cd ~kage/Downloads'
+alias doc='cd ~kage/Documents'
+alias soft='cd ~kage/software'
+alias temp='cd ~kage/temp'
+alias usb='cd ~kage/works/ace.devel/ace_usb_install'
+alias kaged='cd ~kage/works/kage.devel'

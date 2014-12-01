@@ -1,0 +1,52 @@
+#Kage Library  - ib
+#$lib_ver$:0.0.4
+
+_k_loaded_ib(){
+   local null
+}
+
+_k_ib_help() {
+    local help="Library ib's  help
+Usage) ${FUNCNAME} "
+    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    echo "Library : ib "
+}
+
+
+_k_ib(){
+    [ -n "$_K_LIB" ] || error_return "_K_LIB not found" || return 1
+    local help="Library ib's start function
+Usage) ${FUNCNAME} "
+    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    ### start(open) library code here ###
+}
+
+
+#_k_ib_close(){
+#    local help=" Library ib's closing function
+#Usage) ${FUNCNAME} "
+#    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+#    ### close library code here ###
+#}
+
+
+#_k_ib_example(){
+#    local help="help
+#Usage) ${FUNCNAME} "
+#    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+#    ### your code here ###
+#}
+
+     
+#include misc
+_k_ib_registered_memory() {
+    local log_mtts_per_seg log_num_mtt kB
+    kB=1024
+    log_mtts_per_seg_orig=$(cat /sys/module/mlx4_core/parameters/log_mtts_per_seg)
+    log_num_mtt_orig=$(cat /sys/module/mlx4_core/parameters/log_num_mtt)
+    [ "$log_mtts_per_seg_orig" == "0" ] && log_mtts_per_seg=3 || log_mtts_per_seg=$log_mtts_per_seg_orig
+    [ "$log_num_mtt_orig" == "0" ] && log_num_mtt=20 || log_num_mtt=$log_num_mtt_orig
+    echo "log_mtts_per_seg : $log_mtts_per_seg($log_mtts_per_seg_orig)"
+    echo "log_num_mtt : $log_num_mtt($log_num_mtt_orig)"
+    echo "Registered memory size : $(_k_misc_print_byte $(echo "(2^$log_num_mtt) * (2^$log_mtts_per_seg) * (4 * $kB)" | bc ))"
+}

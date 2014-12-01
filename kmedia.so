@@ -1,0 +1,371 @@
+#Kage Library  - media
+#$lib_ver$:0.0.2
+
+_k_loaded_media(){
+   local null
+}
+
+_k_media_help() {
+    local help="Library media's  help
+Usage) ${FUNCNAME} "
+    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    echo "Library : media "
+}
+
+
+_k_media(){
+    [ -n "$_K_LIB" ] || error_return "_K_LIB not found" || return 1
+    local help="Library media's start function
+Usage) ${FUNCNAME} "
+    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+    ### start(open) library code here ###
+}
+
+_k_media_usb_init() {
+  local iu USB_DEV USB_MOUNT USB_MNT USB_MNT2 USB_DEVICE_REAL
+  echo
+  echo "Initialization for USB Media"
+  echo
+
+  USB_DEV=$1
+  USB_MOUNT=$2
+
+  USB_DEVICE_REAL=$(echo $USB_DEV | sed -e 's/[1-9]//g')
+  ls $USB_DEVICE_REAL > /dev/null 2>&1 || error_exit "USB Device not found"
+  find /sys/devices/ | grep -w $(basename $USB_DEVICE_REAL) | grep usb > /dev/null 2>&1 || error_exit "Warning device"
+
+  [ -n "$1" ] || error_exit "Need usb device (usage: $0 <mk usb device>)"
+  USB_MNT=( $(df -h | grep $USB_DEVICE_REAL | awk '{printf $6}' ) )
+  USB_MNT2=( $(df -h | grep ${USB_DEVICE_REAL}2 | awk '{printf $6}' ) )
+  [ ${#USB_MNT[*]} -gt 0 ] && error_exit "used USB device ( ${USB_MNT[*]} ) "
+  [ ${#USB_MNT2[*]} -gt 0 ] && error_exit "used USB device ( ${USB_MNT2[*]} ) "
+
+  echo "init usb device($USB_DEVICE_REAL), waiting..."
+  sleep 1
+  dd if=/dev/zero of=$USB_DEVICE_REAL bs=512 count=1  > /dev/null 2>&1
+  [ -d $USB_MOUNT ] || mkdir -p $USB_MOUNT > /dev/null 2>&1
+  [ -d ${USB_MOUNT}2 ] || mkdir -p ${USB_MOUNT}2 > /dev/null 2>&1
+  #add format usb device and mount
+  echo yes | parted $USB_DEVICE_REAL mklabel msdos > /dev/null 2>&1
+
+fdisk $USB_DEVICE_REAL << EOF  > /dev/null 2>&1
+n
+p
+1
+
++200MB
+n
+p
+2
+
+
+t
+1
+6
+a
+1
+wq
+EOF
+
+  fdisk -l $USB_DEVICE_REAL
+  sleep 2
+  echo
+  echo "format boot device, waiting..."
+  echo
+  mkfs.vfat ${USB_DEVICE_REAL}1  > /dev/null 2>&1  || error_exit "Format fail"
+  sleep 2
+  echo
+  echo "format($FS_TYPE) usb device, waiting..."
+  echo
+  mkfs.${FS_TYPE} ${USB_DEVICE_REAL}2 || error_exit "Format fail"
+  sleep 5
+  mount ${USB_DEVICE_REAL}1 $USB_MOUNT > /dev/null 2>&1 || error_exit "USB Mount fail"
+  mount ${USB_DEVICE_REAL}2 ${USB_MOUNT}2 > /dev/null 2>&1 || error_exit "USB Mount fail"
+}
+
+
+_k_media_usb_copy_os() {
+  local OS_NAME ISO_FILENAME
+  OS_NAME=$1
+  ISO_FILENAME=$2
+  echo
+  echo "Copy OS image($ISO_FILENAME), waiting about 10min."
+  echo
+  [ -d ${USB_MOUNT}2/$OS_NAME ] || mkdir -p ${USB_MOUNT}2/$OS_NAME
+  [ -f $ISO_FILENAME ] || error_exit "Can not found $ISO_FILENAME"
+  cp -f $ISO_FILENAME ${USB_MOUNT}2/$OS_NAME
+}
+
+_k_media_usb_mbr() {
+  local OS_ISO_FILE USB_DEV BOOT_MENU_DIR OS_NAME USB_ISOLINUX_TMP_DIR BOOT_TOOL USB_MOUNT o_skip_set_bootenv_usb INSTALL_SERVER_USB_DEV SYSLINUX_VER  SYSLINUX_FVER
+  OS_ISO_FILE=$1
+  USB_DEV=$2
+  OS_NAME=$3
+  BOOT_TOOL=$4
+  USB_MOUNT=$5
+  INSTALL_SERVER_USB_DEV=$6
+  o_skip_set_bootenv_usb=$7
+
+  echo
+  echo "build usb boot loader(mbr)"
+  echo
+  [ -n "$BOOT_TOOL" ] || BOOT_TOOL=syslinux
+
+  if cat /etc/issue | grep Ubuntu > /dev/null 2>&1; then
+    RPM_QA="dpkg -l "
+    CHK_OS=ubuntu
+    if [ "$BOOT_TOOL" == "syslinux" ]; then
+      $RPM_QA |grep syslinux > /dev/null 2>&1 || error_return "Requirement package is syslinux" || return 1
+      SYSLINUX_VER=$($RPM_QA | grep syslinux | awk '{print $3}' | awk -F+ '{print $1}' | awk -F. '{print $2}')
+      SYSLINUX_FVER=$($RPM_QA | grep "syslinux " | awk -F+ '{print $1}' | awk -F: '{print $2}' |  awk -F. '{print $1}')
+    fi
+  else
+    RPM_QA="rpm -qa "
+    CHK_OS=rhel
+    if [ "$BOOT_TOOL" == "syslinux" ]; then
+      $RPM_QA |grep syslinux > /dev/null 2>&1 || error_return "Requirement package is syslinux" || return 1
+      SYSLINUX_VER=$($RPM_QA |grep syslinux | awk -F- '{print $2}' | awk -F. '{print $2}')
+      SYSLINUX_FVER=$($RPM_QA |grep syslinux | awk -F- '{print $2}' | awk -F. '{print $1}')
+    fi
+  fi
+
+
+  USB_ISOLINUX_TMP_DIR=$(mktemp -d /tmp/ISOLINUX.XXXXX)
+  [ -d $USB_ISOLINUX_TMP_DIR ] || mkdir -p $USB_ISOLINUX_TMP_DIR
+  mount -o loop $OS_ISO_FILE ${USB_ISOLINUX_TMP_DIR}
+
+  if [ "$OS_NAME" == "rhel6.1" -o "$OS_NAME" == "rhel6.2" -o "$OS_NAME" == "centos6.1" ]; then
+    mkdir -p ${USB_MOUNT}2/${OS_NAME}/images
+    cp -fa ${USB_ISOLINUX_TMP_DIR}/images/install.img ${USB_MOUNT}2/${OS_NAME}/images
+  fi
+
+  if [ "syslinux" == "${BOOT_TOOL}" ]; then
+    if cat /etc/issue | grep Ubuntu > /dev/null 2>&1; then
+      RPM_QA="dpkg -l "
+      CHK_OS=ubuntu
+      if [ "$BOOT_TOOL" == "syslinux" ]; then
+        SYSLINUX_VER=$($RPM_QA | grep syslinux | awk '{print $3}' | awk -F+ '{print $1}' | awk -F. '{print $2}')
+        SYSLINUX_FVER=$($RPM_QA | grep "syslinux " | awk -F+ '{print $1}' | awk -F: '{print $2}' |  awk -F. '{print $1}')
+      fi
+    else
+      RPM_QA="rpm -qa "
+      CHK_OS=rhel
+      if [ "$BOOT_TOOL" == "syslinux" ]; then
+        SYSLINUX_VER=$($RPM_QA |grep syslinux | awk -F- '{print $2}' | awk -F. '{print $2}')
+        SYSLINUX_FVER=$($RPM_QA |grep syslinux | awk -F- '{print $2}' | awk -F. '{print $1}')
+      fi
+    fi
+
+    if [ $SYSLINUX_FVER -le  3 ]; then
+       if [ $SYSLINUX_VER -le 60 ]; then
+          rm -fr $USB_MOUNT/*
+          BOOT_MENU_DIR=${USB_MOUNT}
+          cp -f ${USB_ISOLINUX_TMP_DIR}/isolinux/*   $BOOT_MENU_DIR
+          mv $BOOT_MENU_DIR/isolinux.cfg $BOOT_MENU_DIR/syslinux.cfg
+          sleep 5
+          ${BOOT_TOOL} -sf $USB_DEV
+       else
+          rm -fr $USB_MOUNT/*
+          BOOT_MENU_DIR=${USB_MOUNT}/syslinux
+          cp -fr ${USB_ISOLINUX_TMP_DIR}/isolinux  $BOOT_MENU_DIR
+          mv $BOOT_MENU_DIR/isolinux.cfg $BOOT_MENU_DIR/syslinux.cfg
+          sleep 5
+          ${BOOT_TOOL} -s -d syslinux $USB_DEV
+       fi
+    else
+       rm -fr $USB_MOUNT/*
+       BOOT_MENU_DIR=${USB_MOUNT}/syslinux
+       cp -fr ${USB_ISOLINUX_TMP_DIR}/isolinux  $BOOT_MENU_DIR
+       mv $BOOT_MENU_DIR/isolinux.cfg $BOOT_MENU_DIR/syslinux.cfg
+       sleep 5
+       ${BOOT_TOOL} --stupid --directory syslinux $USB_DEV
+    fi
+  else
+     rm -fr $USB_MOUNT/*
+     BOOT_MENU_DIR=${USB_MOUNT}/syslinux
+     cp -fr ${USB_ISOLINUX_TMP_DIR}/isolinux $BOOT_MENU_DIR
+     mv $BOOT_MENU_DIR/isolinux.cfg $BOOT_MENU_DIR/syslinux.cfg
+     ${BOOT_TOOL}
+  fi
+  [ -n "$LOGO" ] && convert -depth 8 -colors 14 -resize 640x220 $LOGO $BOOT_MENU_DIR/splash.lss
+
+  umount ${USB_ISOLINUX_TMP_DIR}
+  rmdir ${USB_ISOLINUX_TMP_DIR}
+
+  [ "$o_skip_set_bootenv_usb" == "1" ] || set_bootenv_usb ${INSTALL_SERVER_USB_DEV}  ${OS_NAME}  ${BOOT_MENU_DIR}
+}
+
+########################################
+## modify ISOLINUX for DVD/USB boot
+########################################
+_k_media_boot_msg() {
+   local OS_NAME BOOT_MENU_DIR
+   echo
+   echo "build boot menu message"
+   echo 
+   OS_NAME=$1
+   BOOT_MENU_DIR=$2
+
+   #if [ "$OS_NAME" == "centos5.3" ]; then
+   if echo "$OS_NAME" | grep "centos" >& /dev/null ; then
+
+  cat $BOOT_MENU_DIR/boot.msg | while read line; do echo $line | grep "graphical mode" && echo "
+- To install mgmt1_hr of $OS_NAME for ACE, press the : ^O0bmgmt1_hr <ENTER>^O07.
+- To install mgmt1_sr of $OS_NAME for ACE, press the : ^O0bmgmt1_sr <ENTER>^O07.
+
+- To install mgmt2_hr of $OS_NAME for ACE, press the : ^O0bmgmt2_hr <ENTER>^O07.
+- To install mgmt2_sr of $OS_NAME for ACE, press the : ^O0bmgmt2_sr <ENTER>^O07." || echo $line ;done  > $BOOT_MENU_DIR/boot.msg~
+
+   else
+
+  cat $BOOT_MENU_DIR/boot.msg | while read line; do echo $line | grep "graphical mode" && echo "
+- To install mgmt1_hr of $OS_NAME for ACE, press the : ^O01mgmt1_hr <ENTER>^O07.
+- To install mgmt1_sr of $OS_NAME for ACE, press the : ^O01mgmt1_sr <ENTER>^O07.
+
+- To install mgmt2_hr of $OS_NAME for ACE, press the : ^O01mgmt2_hr <ENTER>^O07.
+- To install mgmt2_sr of $OS_NAME for ACE, press the : ^O01mgmt2_sr <ENTER>^O07." || echo $line ;done  > $BOOT_MENU_DIR/boot.msg~
+
+   fi
+
+   mv $BOOT_MENU_DIR/boot.msg~ $BOOT_MENU_DIR/boot.msg
+}
+
+_k_media_usb_bootenv() {
+  local ISO_DEV ISO_DEV_HR ISO_DEV_SR OS_NAME BOOT_MENU_DIR KICKSTART_FILE1_HR KICKSTART_FILE2_HR KICKSTART_FILE1_SR KICKSTART_FILE2_SR
+  OS_NAME=$2
+  BOOT_MENU_DIR=$3
+
+  echo
+  echo "Set boot environment($OS_NAME) -USB"
+  echo
+
+  if [ "$1" == "auto" ]; then
+      if [ "$OS_NAME" == "rhel6.1" -o "$OS_NAME" == "rhel6.2" -o "$OS_NAME" == "centos6.1" ]; then
+         ISO_DEV_HR=/dev/sda2
+         ISO_DEV_SR=/dev/sde2
+      else
+         ISO_DEV_HR=/dev/sdc2
+      fi
+  else
+      ISO_DEV_HR=$(echo $1 | sed -e 's/1//g')2
+      ISO_DEV_SR=$(echo $1 | sed -e 's/1//g')2
+  fi
+
+  KICKSTART_FILE1_HR=${OS_NAME}.mgmt1_hr.cfg
+  KICKSTART_FILE2_HR=${OS_NAME}.mgmt2_hr.cfg
+  KICKSTART_FILE1_SR=${OS_NAME}.mgmt1_sr.cfg
+  KICKSTART_FILE2_SR=${OS_NAME}.mgmt2_sr.cfg
+
+
+  # modify syslinux.cfg file
+  [ -n "$ISO_DEV_HR" ] || error_exit "Need usb device (usage: $0 <mk usb device> <install server boot usb device>)"
+  [ -n "$ISO_DEV_SR" ] || error_exit "Need usb device (usage: $0 <mk usb device> <install server boot usb device>)"
+
+  echo "label mgmt1_hr
+  kernel vmlinuz
+  append initrd=initrd.img root=/dev/ram devfs=nomount ramdisk_size=9216 method=hd:$(basename $ISO_DEV_HR):/${OS_NAME} ks=hd:$(basename $ISO_DEV_HR):/$KICKSTART_FILE1_HR  driverload=usb-storage
+label mgmt2_hr
+  kernel vmlinuz
+  append initrd=initrd.img root=/dev/ram devfs=nomount ramdisk_size=9216 method=hd:$(basename $ISO_DEV_HR):/${OS_NAME} ks=hd:$(basename $ISO_DEV_HR):/$KICKSTART_FILE2_HR driverload=usb-storage
+label mgmt1_sr
+  kernel vmlinuz
+  append initrd=initrd.img root=/dev/ram devfs=nomount ramdisk_size=9216 method=hd:$(basename $ISO_DEV_SR):/${OS_NAME} ks=hd:$(basename $ISO_DEV_SR):/$KICKSTART_FILE1_SR  driverload=usb-storage
+label mgmt2_sr
+  kernel vmlinuz
+  append initrd=initrd.img root=/dev/ram devfs=nomount ramdisk_size=9216 method=hd:$(basename $ISO_DEV_SR):/${OS_NAME} ks=hd:$(basename $ISO_DEV_SR):/$KICKSTART_FILE2_SR driverload=usb-storage
+" >> $BOOT_MENU_DIR/syslinux.cfg
+
+  boot_msg $OS_NAME $BOOT_MENU_DIR
+}
+
+_k_media_iso_bootenv() {
+  local OS_NAME BOOT_MENU_DIR SRC_DIR
+
+  SRC_DIR=$1
+  OS_NAME=$2
+  BOOT_MENU_DIR=$3
+
+  echo
+  echo "Set boot environment($OS_NAME) -DVD"
+  echo
+
+  KICKSTART_FILE1_HR=${OS_NAME}.mgmt1_hr.cfg
+  KICKSTART_FILE2_HR=${OS_NAME}.mgmt2_hr.cfg
+  KICKSTART_FILE1_SR=${OS_NAME}.mgmt1_sr.cfg
+  KICKSTART_FILE2_SR=${OS_NAME}.mgmt2_sr.cfg
+
+
+  echo "
+label mgmt1_hr
+  kernel vmlinuz
+  append ks=cdrom:/ks/$KICKSTART_FILE1_HR initrd=initrd.img
+label mgmt1_sr
+  kernel vmlinuz
+  append ks=cdrom:/ks/$KICKSTART_FILE1_SR initrd=initrd.img
+label mgmt2_hr
+  kernel vmlinuz
+  append initrd=initrd.img lang=en_us ramdisk_size=7000 ks=cdrom:/ks/$KICKSTART_FILE2_HR devfs=nomount
+label mgmt2_sr
+  kernel vmlinuz
+  append initrd=initrd.img lang=en_us ramdisk_size=7000 ks=cdrom:/ks/$KICKSTART_FILE2_SR devfs=nomount
+  " >> $SRC_DIR/isolinux/isolinux.cfg
+
+  boot_msg $OS_NAME $BOOT_MENU_DIR
+}
+
+_k_media_iso_files() {
+   echo " - Coping source files (of iso) to $SRC_DIR"
+   ISO_TMP_DIR=$(mktemp -d /tmp/ISO.XXXXXX)
+   echo $(pwd)
+   mount -o loop $ISO_OS_FILE ${ISO_TMP_DIR} 2> /dev/null || error_exit "mount $ISO_OS_FILE fail"
+   cd ${ISO_TMP_DIR}
+   tar cf - . | tar xf - -C $SRC_DIR
+   cd ${BASE_PATH}
+   umount $ISO_TMP_DIR 2>/dev/null
+   rmdir $ISO_TMP_DIR
+}
+
+_k_media_iso_build() {
+  local BASE_PATH SRC_DIR BOOTCD PRODUCT_FILE VERSION MAKE_INFO EXTRA
+  SRC_DIR=$1
+  PRODUCT_FILE=$2
+  VERSION=$3
+  MAKE_INFO=$4
+  EXTRA=$5
+
+  echo
+  echo "Create product $EXTRA iso file"
+  echo
+
+  if [ ! -n "$EXTRA" ]; then
+      cp -fra $SRC_DIR/isolinux $BASE_PATH
+      BOOTCD="-b isolinux/isolinux.bin  -c isolinux/boot.cat  -no-emul-boot -boot-load-size 4 -boot-info-table "
+  fi
+
+  mkisofs \
+      ${BOOTCD} \
+      -input-charset=UTF-8 -output-charset=UTF-8 \
+      -R -J -T -v \
+      -V "${VERSION}" \
+      -A "${MAKE_INFO}" \
+      -x "lost+found" \
+      -o ${PRODUCT_FILE} \
+      ${SRC_DIR}
+}
+
+
+#_k_media_close(){
+#    local help=" Library media's closing function
+#Usage) ${FUNCNAME} "
+#    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+#    ### close library code here ###
+#}
+
+
+#_k_media_example(){
+#    local help="help
+#Usage) ${FUNCNAME} "
+#    [  "${FUNCNAME}_${_K_XCODE_HELP}" == "$1" ] && _k_help  && return 0
+#    ### your code here ###
+#}
+
